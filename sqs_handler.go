@@ -45,7 +45,7 @@ func (handler *SQSHandler) newClient(client sqsiface.SQSAPI) {
 	handler.client = client
 }
 
-func (handler *SQSHandler) receive() {
+func (handler *SQSHandler) receive() bool {
 	receiveMessageParams := &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(handler.queueURL),
 		MaxNumberOfMessages: aws.Int64(1),
@@ -57,7 +57,11 @@ func (handler *SQSHandler) receive() {
 		// Print the error, cast err to awserr.Error to get the Code and
 		// Message from an error.
 		log.Println("E: ", receiveMessageError.Error())
-		return
+		return false
+	}
+	if len(receiveMessageResponse.Messages) == 0 {
+		log.Println("I: ", "No messages retrieved from queue")
+		return false
 	}
 
 	handler.messageBody = *receiveMessageResponse.Messages[0].Body
@@ -68,6 +72,7 @@ func (handler *SQSHandler) receive() {
 	if writeFileError != nil {
 		panic(writeFileError)
 	}
+	return true
 }
 
 func (handler *SQSHandler) success() {

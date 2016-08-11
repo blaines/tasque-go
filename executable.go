@@ -21,9 +21,10 @@ type Executable struct {
 
 func (executable *Executable) execute(handler MessageHandler) {
 	handler.initialize()
-	handler.receive()
-	executionHelper(executable.binary, executable.arguments, handler.body(), handler.id(), executable.timeout)
-	handler.success()
+	if handler.receive() {
+		executionHelper(executable.binary, executable.arguments, handler.body(), handler.id(), executable.timeout)
+		handler.success()
+	}
 }
 
 func executionHelper(binary string, executableArguments []string, messageBody *string, messageID *string, timeout time.Duration) {

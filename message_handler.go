@@ -5,6 +5,6 @@ type MessageHandler interface {
 	id() *string
 	body() *string
 	initialize()
-	receive()
+	receive() bool
 	success()
 }

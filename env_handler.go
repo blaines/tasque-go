@@ -17,9 +17,10 @@ func (handler *ENVHandler) body() *string {
 
 func (handler *ENVHandler) initialize() {}
 
-func (handler *ENVHandler) receive() {
+func (handler *ENVHandler) receive() bool {
 	handler.messageID = "development"
 	handler.messageBody = os.Getenv("TASK_PAYLOAD")
+	return true
 }
 
 func (handler *ENVHandler) success() {}
