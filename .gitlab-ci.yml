@@ -1,0 +1,16 @@
+image: golang
+
+before_script:
+  - cat /etc/issue
+  - uname -a
+  - apt-get update -y
+  - apt-get install -y docker
+  - export GOBIN=$GOPATH/bin
+  - export PATH=$PATH:$GOBIN
+  - go version
+  - go env
+
+build:
+  stage: build
+  script:
+    - make build
