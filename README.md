@@ -22,8 +22,11 @@ TASK_QUEUE_URL='{SQS URL}' AWS_REGION='us-west-2' TASK_TIMEOUT="30s" ./tasque no
 ### Environment Variables
 
 TASK_QUEUE_URL
+
 AWS_REGION
+
 TASK_PAYLOAD
+
 TASK_TIMEOUT
 
 ## Build
