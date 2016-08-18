@@ -11,3 +11,10 @@ build:
         name: build
         code: |
           make build
+
+docker-build:
+  steps:
+    - script:
+        name: docker-build
+        code: |
+          make docker-build
