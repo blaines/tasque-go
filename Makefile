@@ -7,8 +7,6 @@ build:
 
 docker-build:
 	docker run --rm -v "$(CURDIR)":/go/src/tasque -w /go/src/tasque -e GOPATH="/go" golang:latest bash -c make
-	make -C Dockerfiles
-	rm tasque
 
 push: build
 	make push -C Dockerfiles
