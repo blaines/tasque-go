@@ -54,3 +54,14 @@ console.log("id: ", process.env.TASK_ID);
 
 console.log("Hello World. Task Complete.");
 ```
+
+## Known Issues
+
+#### Argument list too long
+- Reduce the TASK_PAYLOAD size or increase the container stack size.
+- Use the file output option or piped output option instead.
+
+Resources:
+http://man7.org/linux/man-pages/man2/execve.2.html
+http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=b6a2fea39318e43fee84fa7b0b90d68bed92d2ba
+http://unix.stackexchange.com/questions/120642/what-defines-the-maximum-size-for-a-command-single-argument
