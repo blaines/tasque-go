@@ -77,20 +77,26 @@ func executionHelper(binary string, executableArguments []string, messageBody *s
 	var stdinPipe io.WriteCloser
 	var stdoutPipe io.ReadCloser
 	var stderrPipe io.ReadCloser
-	cmd := exec.Command(binary, executableArguments...)
+
+	environ := os.Environ()
+	environ = append(environ, fmt.Sprintf("TASK_PAYLOAD=%s", *messageBody))
+	environ = append(environ, fmt.Sprintf("TASK_ID=%s", *messageID))
+	command := exec.Command(binary, executableArguments...)
+	command.Env = environ
+
 	if messageBody != nil {
-		if stdinPipe, err = cmd.StdinPipe(); err != nil {
+		if stdinPipe, err = command.StdinPipe(); err != nil {
 			return err
 		}
 	}
-	if stdoutPipe, err = cmd.StdoutPipe(); err != nil {
+	if stdoutPipe, err = command.StdoutPipe(); err != nil {
 		return err
 	}
-	if stderrPipe, err = cmd.StderrPipe(); err != nil {
+	if stderrPipe, err = command.StderrPipe(); err != nil {
 		return err
 	}
 
-	if err = cmd.Start(); err != nil {
+	if err = command.Start(); err != nil {
 		return err
 	}
 
@@ -103,7 +109,7 @@ func executionHelper(binary string, executableArguments []string, messageBody *s
 		return err
 	}
 
-	if err = cmd.Wait(); err != nil {
+	if err = command.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.Sys().(syscall.WaitStatus).ExitStatus()
 			log.Printf("An error occured (%s %d)\n", binary, exitCode)

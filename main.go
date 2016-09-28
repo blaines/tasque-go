@@ -4,8 +4,6 @@ import (
 	"log"
 	"os"
 	"time"
-
-	"github.com/mitchellh/cli"
 )
 
 // Tasque hello world
@@ -18,24 +16,24 @@ type Tasque struct {
 // -e environment variable TASK_PAYLOAD
 // -i standard input
 // -f file output
+// TODO:
+// func main() {
+// 	c := cli.NewCLI("app", "1.0.0")
+// 	c.Args = os.Args[1:]
+// 	c.Commands = map[string]cli.CommandFactory{
+// 	// "foo": fooCommandFactory,
+// 	// "bar": barCommandFactory,
+// 	}
+//
+// 	exitStatus, err := c.Run()
+// 	if err != nil {
+// 		log.Println(err)
+// 	}
+//
+// 	os.Exit(exitStatus)
+// }
 
 func main() {
-	c := cli.NewCLI("app", "1.0.0")
-	c.Args = os.Args[1:]
-	c.Commands = map[string]cli.CommandFactory{
-	// "foo": fooCommandFactory,
-	// "bar": barCommandFactory,
-	}
-
-	exitStatus, err := c.Run()
-	if err != nil {
-		log.Println(err)
-	}
-
-	os.Exit(exitStatus)
-}
-
-func mainOld() {
 	arguments := os.Args[1:]
 	if len(os.Args) > 1 {
 		tasque := Tasque{}
