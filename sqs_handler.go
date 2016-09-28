@@ -3,9 +3,12 @@ package main
 import (
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
@@ -37,7 +40,12 @@ func (handler *SQSHandler) body() *string {
 }
 
 func (handler *SQSHandler) initialize() {
-	handler.newClient(sqs.New(session.New()))
+	handler.newClient(sqs.New(session.New(), &aws.Config{
+		MaxRetries: aws.Int(30),
+		HTTPClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}))
 	handler.queueURL = os.Getenv("TASK_QUEUE_URL")
 }
 
@@ -83,9 +91,12 @@ func (handler *SQSHandler) success() {
 	_, deleteMessageError := handler.client.DeleteMessage(deleteMessageParams)
 
 	if deleteMessageError != nil {
-		// Print the error, cast err to awserr.Error to get the Code and
-		// Message from an error.
-		log.Println(deleteMessageError.Error())
+		if err != nil {
+			if awsErr, ok := err.(awserr.Error); ok {
+				log.Fatalf("AWS SDK Error: %s %s", awsErr.Code(), awsErr.Message())
+				// The message cannot be deleted from the SQS queue!
+			}
+		}
 		return
 	}
 }
