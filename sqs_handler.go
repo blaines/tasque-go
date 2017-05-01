@@ -100,3 +100,7 @@ func (handler *SQSHandler) success() {
 		return
 	}
 }
+
+func (handler *SFNHandler) failure() {}
+
+func (handler *SFNHandler) heartbeat() {}
