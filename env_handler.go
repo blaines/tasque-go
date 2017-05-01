@@ -23,4 +23,6 @@ func (handler *ENVHandler) receive() bool {
 	return true
 }
 
-func (handler *ENVHandler) success() {}
+func (handler *ENVHandler) success()   {}
+func (handler *SFNHandler) failure()   {}
+func (handler *SFNHandler) heartbeat() {}
