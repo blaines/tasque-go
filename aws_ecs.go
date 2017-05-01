@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -41,7 +40,7 @@ func (executable *AWSECS) execute(handler MessageHandler) {
 func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 	ch := make(chan error)
 	go func() {
-		ch <- executionHelper(handler.body(), handler.id())
+		ch <- executable.executionHelper(handler.body(), handler.id())
 	}()
 	select {
 	case err := <-ch:
@@ -79,29 +78,15 @@ func outputPipe(pipe io.ReadCloser, annotation string, wg *sync.WaitGroup, e *er
 	}()
 }
 
-func executionHelper(messageBody *string, messageID *string) error {
-	startECSContainer(messageBody, messageID)
+func (executable *AWSECS) executionHelper(messageBody *string, messageID *string) error {
+	executable.startECSContainer(messageBody, messageID)
 	monitorDocker()
 }
 
 //  Task ARN is part of Docker labels...
 //                 "com.amazonaws.ecs.task-arn": "arn:aws:ecs:us-west-2:770136283015:task/d8e65fde-65dc-4e46-aeaa-8b2b33215349",
 
-func startECSContainer(messageBody *string, messageID *string) {
-
-	// ECS_TASK_DEFINITION
-	ecsTaskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
-	if *ecsTaskDefinition == "" {
-		panic("Environment variable ECS_TASK_DEFINITION not set")
-	}
-	// ECS_CONTAINER_NAME
-	overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
-	if *overrideContainerName == "" {
-		panic("Environment variable ECS_CONTAINER_NAME not set")
-	}
-	// OVERRIDE_PAYLOAD_KEY
-	overridePayloadKey = aws.String("TASK_PAYLOAD")
-
+func (executable *AWSECS) startECSContainer(messageBody *string, messageID *string) {
 	// Start ECS task on self
 	sess, err := session.NewSession(&aws.Config{Region: aws.String("us-west-2")})
 	if err != nil {
@@ -115,18 +100,18 @@ func startECSContainer(messageBody *string, messageID *string) {
 		ContainerInstances: []*string{
 			containerInstanceID,
 		},
-		TaskDefinition: ecsTaskDefinition,
+		TaskDefinition: executable.ecsTaskDefinition,
 		Cluster:        ecsCluster,
 		Overrides: &ecs.TaskOverride{
 			ContainerOverrides: []*ecs.ContainerOverride{
 				{
 					Environment: []*ecs.KeyValuePair{
 						{
-							Name:  overridePayloadKey,
+							Name:  executable.overridePayloadKey,
 							Value: aws.String(messageBody),
 						},
 					},
-					Name: overrideContainerName,
+					Name: executable.overrideContainerName,
 				},
 			},
 		},

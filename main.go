@@ -11,7 +11,7 @@ import (
 // Tasque hello world
 type Tasque struct {
 	Handler    MessageHandler
-	Executable *Executable
+	Executable ExecutableInterface
 }
 
 // Support three modes of operation
@@ -65,6 +65,7 @@ func main() {
 			overrideContainerName: overrideContainerName,
 			overridePayloadKey:    overridePayloadKey,
 		}
+		tasque.runWithTimeout()
 	} else {
 		// CLI Mode
 		arguments := os.Args[1:]
