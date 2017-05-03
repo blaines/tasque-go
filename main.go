@@ -36,8 +36,14 @@ type Tasque struct {
 // }
 
 func main() {
+	var ecsTaskDefinition *string
+	var overridePayloadKey *string
+	var overrideContainerName *string
+	var dockerEndpointPath string
+
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
+		log.Println("Docker mode")
 		// Docker Mode
 		// ECS_TASK_DEFINITION
 		ecsTaskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
@@ -64,6 +70,7 @@ func main() {
 			ecsTaskDefinition:     ecsTaskDefinition,
 			overrideContainerName: overrideContainerName,
 			overridePayloadKey:    overridePayloadKey,
+			timeout:               getTimeout(),
 		}
 		tasque.runWithTimeout()
 	} else {
@@ -94,9 +101,11 @@ func (tasque *Tasque) getHandler() {
 	} else if taskQueueURL != "" {
 		handler = &SQSHandler{}
 	} else if activityARN != "" {
-		handler = &SFNHandler{}
+		handler = &SFNHandler{
+			activityARN: activityARN,
+		}
 	} else {
-		throw("No handler")
+		panic("No handler")
 	}
 	tasque.Handler = handler
 }

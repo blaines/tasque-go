@@ -39,7 +39,7 @@ func (executable *Executable) executableTimeoutHelper(handler MessageHandler) {
 	case err := <-ch:
 		if err != nil {
 			log.Printf("E: %s %s", executable.binary, err.Error())
-			handler.failure()
+			handler.failure(err)
 		} else {
 			log.Printf("I: %s finished successfully", executable.binary)
 			handler.success()

@@ -1,15 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -25,7 +23,7 @@ type AWSECS struct {
 	overrideContainerName *string
 	overridePayloadKey    *string
 	timeout               time.Duration
-	docker                Docker
+	docker                *Docker
 }
 
 // Docker hello world
@@ -104,7 +102,7 @@ func (m *InstanceMetadata) init() *ec2metadata.EC2Metadata {
 	}
 }
 
-func (executable *AWSECS) execute(handler MessageHandler) {
+func (executable AWSECS) execute(handler MessageHandler) {
 	handler.initialize()
 	if handler.receive() {
 		executable.executableTimeoutHelper(handler)
@@ -119,42 +117,20 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 	select {
 	case err := <-ch:
 		if err != nil {
-			log.Printf("E: %s %s", executable.ecsTaskDefinition, err.Error())
-			handler.failure()
+			log.Printf("E: %s %s", *executable.ecsTaskDefinition, err.Error())
+			handler.failure(err)
 		} else {
-			log.Printf("I: %s finished successfully", executable.ecsTaskDefinition)
+			log.Printf("I: %s finished successfully", *executable.ecsTaskDefinition)
 			handler.success()
 		}
 	case <-time.After(executable.timeout):
-		log.Printf("E: %s timed out after %f seconds", executable.ecsTaskDefinition, executable.timeout.Seconds())
+		err := errors.New(fmt.Sprintf("%s timed out after %f seconds", *executable.ecsTaskDefinition, executable.timeout.Seconds()))
+		log.Println(err)
+		handler.failure(err)
 	}
 }
 
-func inputPipe(pipe io.WriteCloser, inputString *string, wg *sync.WaitGroup, e *error) {
-	wg.Add(1)
-	go func() {
-		io.WriteString(pipe, *inputString)
-		pipe.Close()
-		wg.Done()
-	}()
-}
-
-func outputPipe(pipe io.ReadCloser, annotation string, wg *sync.WaitGroup, e *error) {
-	wg.Add(1)
-	go func() {
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, pipe); err == nil {
-			log.Printf("%s %s\n", annotation, string(buf.Bytes()))
-		} else {
-			*e = err
-		}
-		wg.Done()
-	}()
-}
-
 func (executable *AWSECS) executionHelper(messageBody *string, messageID *string) error {
-	var exitCode int
-	var err error
 	executable.startECSContainer(messageBody, messageID)
 	executable.monitorDocker()
 	// return err
@@ -219,8 +195,6 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 }
 
 func (executable *AWSECS) monitorDocker() {
-	// Connect to docker event service
-	executable.docker.connect()
 	executable.docker.addListener()
 	// Monitor docker events for sibling Projector task
 	status, err := executable.listenForDie()
@@ -274,7 +248,7 @@ func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 	}
 }
 
-func (dockerobj *Docker) connect(string dockerEndpointPath) {
+func (dockerobj *Docker) connect(dockerEndpointPath string) {
 	log.Printf("[INFO] Connecting to Docker API.")
 	endpoint := dockerEndpointPath
 	client, err := docker.NewClient(endpoint)
