@@ -2,12 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -124,23 +124,29 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 			handler.success()
 		}
 	case <-time.After(executable.timeout):
-		err := errors.New(fmt.Sprintf("%s timed out after %f seconds", *executable.ecsTaskDefinition, executable.timeout.Seconds()))
+		err := fmt.Errorf("%s timed out after %f seconds", *executable.ecsTaskDefinition, executable.timeout.Seconds())
 		log.Println(err)
 		handler.failure(err)
 	}
 }
 
 func (executable *AWSECS) executionHelper(messageBody *string, messageID *string) error {
-	executable.startECSContainer(messageBody, messageID)
-	executable.monitorDocker()
-	// return err
+	var err error
+	err = executable.startECSContainer(messageBody, messageID)
+	if err != nil {
+		return err
+	}
+	err = executable.monitorDocker()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 //  Task ARN is part of Docker labels...
 //                 "com.amazonaws.ecs.task-arn": "arn:aws:ecs:us-west-2:770136283015:task/d8e65fde-65dc-4e46-aeaa-8b2b33215349",
 
-func (executable *AWSECS) startECSContainer(messageBody *string, messageID *string) {
+func (executable *AWSECS) startECSContainer(messageBody *string, messageID *string) error {
 	e := &ECSMetadata{}
 	m := &InstanceMetadata{}
 	m.init()
@@ -155,7 +161,7 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 	sess, err := session.NewSession(&aws.Config{Region: aws.String("us-west-2")})
 	if err != nil {
 		fmt.Println("failed to create session,", err)
-		return
+		return err
 	}
 
 	svc := ecs.New(sess)
@@ -187,14 +193,32 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 		// Print the error, cast err to awserr.Error to get the Code and
 		// Message from an error.
 		fmt.Println("Error:", err.Error())
-		return
+		return err
 	}
 
 	// Pretty-print the response data.
 	fmt.Println(resp)
+	if len(resp.Failures) > 0 {
+		var err error
+		// There were errors starting the container
+		reason := resp.Failures[0].Reason
+		if strings.Contains(*reason, "RESOURCE") {
+			err = fmt.Errorf("%s %s The resource or resources requested by the task are unavailable on the given container instance. If the resource is CPU or memory, you may need to add container instances to your cluster", *reason, *resp.Failures[0].Arn)
+		} else if strings.Contains(*reason, "AGENT") {
+			err = fmt.Errorf("%s %s The container instance that you attempted to launch a task onto has an agent which is currently disconnected. In order to prevent extended wait times for task placement, the request was rejected", *reason, *resp.Failures[0].Arn)
+		} else if strings.Contains(*reason, "ATTRIBUTE") {
+			err = fmt.Errorf("%s %s Your task definition contains a parameter that requires a specific container instance attribute that is not available on your container instances. For more information on which attributes are required for specific task definition parameters and agent configuration variables, see Task Definition Parameters and Amazon ECS Container Agent Configuration", *reason, *resp.Failures[0].Arn)
+		} else {
+			// Unrecognized error
+			err = fmt.Errorf("Unrecognized error: '%s' %+v", *reason, resp)
+		}
+		return err
+	} else {
+		return nil
+	}
 }
 
-func (executable *AWSECS) monitorDocker() {
+func (executable *AWSECS) monitorDocker() error {
 	executable.docker.addListener()
 	// Monitor docker events for sibling Projector task
 	status, err := executable.listenForDie()
@@ -215,6 +239,7 @@ func (executable *AWSECS) monitorDocker() {
 		log.Printf("[ERROR] Execution completed with non-zero exit status")
 		executable.failure()
 	}
+	return nil
 }
 
 func (executable *AWSECS) listenForDie() (exitCode string, err error) {
