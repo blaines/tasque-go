@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ type AWSECS struct {
 	ecsTaskDefinition     *string
 	overrideContainerName *string
 	overridePayloadKey    *string
+	taskArn               string
 	timeout               time.Duration
 	docker                *Docker
 }
@@ -132,7 +132,9 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 
 func (executable *AWSECS) executionHelper(messageBody *string, messageID *string) error {
 	var err error
-	err = executable.startECSContainer(messageBody, messageID)
+	var taskArn string
+	taskArn, err = executable.startECSContainer(messageBody, messageID)
+	executable.taskArn = taskArn
 	if err != nil {
 		return err
 	}
@@ -146,7 +148,7 @@ func (executable *AWSECS) executionHelper(messageBody *string, messageID *string
 //  Task ARN is part of Docker labels...
 //                 "com.amazonaws.ecs.task-arn": "arn:aws:ecs:us-west-2:770136283015:task/d8e65fde-65dc-4e46-aeaa-8b2b33215349",
 
-func (executable *AWSECS) startECSContainer(messageBody *string, messageID *string) error {
+func (executable *AWSECS) startECSContainer(messageBody *string, messageID *string) (string, error) {
 	e := &ECSMetadata{}
 	m := &InstanceMetadata{}
 	m.init()
@@ -161,7 +163,7 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 	sess, err := session.NewSession(&aws.Config{Region: aws.String("us-west-2")})
 	if err != nil {
 		fmt.Println("failed to create session,", err)
-		return err
+		return "", err
 	}
 
 	svc := ecs.New(sess)
@@ -193,7 +195,7 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 		// Print the error, cast err to awserr.Error to get the Code and
 		// Message from an error.
 		fmt.Println("Error:", err.Error())
-		return err
+		return "", err
 	}
 
 	// Pretty-print the response data.
@@ -212,9 +214,10 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 			// Unrecognized error
 			err = fmt.Errorf("Unrecognized error: '%s' %+v", *reason, resp)
 		}
-		return err
+		return "", err
 	} else {
-		return nil
+		taskArn := resp.Tasks[0].Containers[0].TaskArn
+		return *taskArn, nil
 	}
 }
 
@@ -223,41 +226,36 @@ func (executable *AWSECS) monitorDocker() error {
 	// Monitor docker events for sibling Projector task
 	status, err := executable.listenForDie()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if status == "0" {
 		// status is die
 		log.Printf("[INFO] Execution completed successfully")
 		executable.success()
-	} else if status == "timeout" {
-		// event is timeout
-		log.Printf("[ERROR] Execution timed out")
-		executable.failure()
-	} else {
-		// non-zero exit
-		log.Printf("[ERROR] Execution completed with non-zero exit status")
-		executable.failure()
+		return nil
 	}
-	return nil
+	// non-zero exit
+	log.Printf("[ERROR] Execution completed with non-zero exit status")
+	err = fmt.Errorf("%s died with non-zero exit status (exit code %s)", *executable.ecsTaskDefinition, status)
+	executable.failure()
+	return err
+
 }
 
 func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 	log.Printf("[INFO] Monitoring Docker events.")
-	log.Printf("%+v\n", executable.docker)
-	timeout := time.After(getTimeout())
+	log.Printf("[DEBUG] %+v\n", executable.docker)
+	duration := getTimeout()
+	timeout := time.After(duration)
 	defer executable.docker.removeListener()
 	for {
 		select {
 		case msg := <-executable.docker.eventsCh:
 			if msg != nil {
-				// log.Printf("%+v\n", msg)
-				matched, _ := regexp.MatchString(
-					fmt.Sprintf(".*%s.*", *executable.overrideContainerName),
-					msg.Actor.Attributes["name"])
-
+				matched := msg.Actor.Attributes["com.amazonaws.ecs.task-arn"] == executable.taskArn
 				if matched {
-					log.Printf("%+v\n", msg)
+					log.Printf("[DEBUG] %+v\n", msg)
 					switch msg.Action {
 					case "die":
 						log.Printf("[INFO] Container die event")
@@ -267,8 +265,8 @@ func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 			}
 		case <-timeout:
 			log.Printf("[INFO] Instance timeout reached.")
-			// TODO this would possibly be an error
-			return "timeout", nil
+			err := fmt.Errorf("Docker container %s timed out after %f seconds", *executable.ecsTaskDefinition, duration.Seconds())
+			return "timeout", err
 		}
 	}
 }
@@ -285,8 +283,6 @@ func (dockerobj *Docker) connect(dockerEndpointPath string) {
 }
 
 func (dockerobj *Docker) addListener() {
-	// docker.eventsCh = make(chan *docker.APIEvents)
-	// input_data := make(chan *sfn.GetActivityTaskOutput)
 	err := dockerobj.client.AddEventListener(dockerobj.eventsCh)
 	if err != nil {
 		log.Fatal(err)
