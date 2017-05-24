@@ -4,12 +4,14 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
 )
 
 // Tasque hello world
 type Tasque struct {
 	Handler    MessageHandler
-	Executable *Executable
+	Executable ExecutableInterface
 }
 
 // Support three modes of operation
@@ -34,28 +36,76 @@ type Tasque struct {
 // }
 
 func main() {
-	arguments := os.Args[1:]
-	if len(os.Args) > 1 {
+	var ecsTaskDefinition *string
+	var overridePayloadKey *string
+	var overrideContainerName *string
+	var dockerEndpointPath string
+
+	isDocker := os.Getenv("DOCKER")
+	if isDocker != "" {
+		log.Println("Docker mode")
+		// Docker Mode
+		// ECS_TASK_DEFINITION
+		ecsTaskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
+		if *ecsTaskDefinition == "" {
+			panic("Environment variable ECS_TASK_DEFINITION not set")
+		}
+		// ECS_CONTAINER_NAME
+		overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
+		if *overrideContainerName == "" {
+			panic("Environment variable ECS_CONTAINER_NAME not set")
+		}
+		// DOCKER_ENDPOINT
+		dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
+		if dockerEndpointPath == "" {
+			dockerEndpointPath = "unix:///var/run/docker.sock"
+		}
+		// OVERRIDE_PAYLOAD_KEY
+		overridePayloadKey = aws.String("TASK_PAYLOAD")
 		tasque := Tasque{}
-		tasque.Executable = &Executable{
-			binary:    arguments[0],
-			arguments: arguments[1:],
-			timeout:   getTimeout(),
+		d := &Docker{}
+		d.connect(dockerEndpointPath)
+		tasque.Executable = &AWSECS{
+			docker:                d,
+			ecsTaskDefinition:     ecsTaskDefinition,
+			overrideContainerName: overrideContainerName,
+			overridePayloadKey:    overridePayloadKey,
+			timeout:               getTimeout(),
 		}
 		tasque.runWithTimeout()
 	} else {
-		log.Println("Expecting tasque to be run with an application")
-		log.Println("Usage: tasque npm start")
+		// CLI Mode
+		arguments := os.Args[1:]
+		if len(os.Args) > 1 {
+			tasque := Tasque{}
+			tasque.Executable = &Executable{
+				binary:    arguments[0],
+				arguments: arguments[1:],
+				timeout:   getTimeout(),
+			}
+			tasque.runWithTimeout()
+		} else {
+			log.Println("Expecting tasque to be run with an application")
+			log.Println("Usage: tasque npm start")
+		}
 	}
 }
 
 func (tasque *Tasque) getHandler() {
 	var handler MessageHandler
 	taskPayload := os.Getenv("TASK_PAYLOAD")
+	taskQueueURL := os.Getenv("TASK_QUEUE_URL")
+	activityARN := os.Getenv("TASK_ACTIVITY_ARN")
 	if taskPayload != "" {
 		handler = &ENVHandler{}
-	} else {
+	} else if taskQueueURL != "" {
 		handler = &SQSHandler{}
+	} else if activityARN != "" {
+		handler = &SFNHandler{
+			activityARN: activityARN,
+		}
+	} else {
+		panic("No handler")
 	}
 	tasque.Handler = handler
 }

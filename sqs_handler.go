@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
@@ -91,12 +90,9 @@ func (handler *SQSHandler) success() {
 	_, deleteMessageError := handler.client.DeleteMessage(deleteMessageParams)
 
 	if deleteMessageError != nil {
-		if err != nil {
-			if awsErr, ok := err.(awserr.Error); ok {
-				log.Fatalf("AWS SDK Error: %s %s", awsErr.Code(), awsErr.Message())
-				// The message cannot be deleted from the SQS queue!
-			}
-		}
 		return
 	}
 }
+
+func (handler *SQSHandler) failure(err error) {}
+func (handler *SQSHandler) heartbeat()        {}

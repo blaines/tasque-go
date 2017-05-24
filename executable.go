@@ -27,7 +27,6 @@ func (executable *Executable) execute(handler MessageHandler) {
 	handler.initialize()
 	if handler.receive() {
 		executable.executableTimeoutHelper(handler)
-		handler.success()
 	}
 }
 
@@ -40,9 +39,10 @@ func (executable *Executable) executableTimeoutHelper(handler MessageHandler) {
 	case err := <-ch:
 		if err != nil {
 			log.Printf("E: %s %s", executable.binary, err.Error())
-			os.Exit(1)
+			handler.failure(err)
 		} else {
 			log.Printf("I: %s finished successfully", executable.binary)
+			handler.success()
 		}
 	case <-time.After(executable.timeout):
 		log.Printf("E: %s timed out after %f seconds", executable.binary, executable.timeout.Seconds())

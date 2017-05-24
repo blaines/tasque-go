@@ -7,4 +7,6 @@ type MessageHandler interface {
 	initialize()
 	receive() bool
 	success()
+	failure(err error)
+	heartbeat()
 }
