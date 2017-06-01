@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
-	"github.com/fsouza/go-dockerclient"
+    "github.com/fsouza/go-dockerclient"
 )
 
 type aws_Docker struct {
@@ -24,6 +24,7 @@ type aws_Docker struct {
     overridePayloadKey    *string
     taskArn               string
     timeout               time.Duration
+    container             *docker.Container
 }
 
 type DockerInstanceMetadata struct {
@@ -274,6 +275,58 @@ func (dockerobj *aws_Docker) connect(dockerEndpointPath string) {
 	dockerobj.eventsCh = make(chan *docker.APIEvents)
 }
 
+func (dockerobj *aws_Docker) create_docker() {
+    config := docker.Config{
+        AttachStdout: true,
+        AttachStdin: true,
+        Image: "centos",
+        Tty: true,
+        OpenStdin: true,
+    }
+    container_options := docker.CreateContainerOptions{
+        Name: "agisoft_container",
+        Config: &config,
+    }
+
+    docker_container, err := dockerobj.client.CreateContainer(container_options)
+    if err != nil {
+        log.Fatal(err)
+    }
+    dockerobj.container = docker_container
+}
+
+func (dockerobj * aws_Docker) start_docker() {
+    //Try to start the container
+    err := dockerobj.client.StartContainer(dockerobj.container.ID, &docker.HostConfig{})
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+
+func (dockerobj * aws_Docker) stop_docker() {
+    //Try to stop the container
+    err := dockerobj.client.StopContainer(dockerobj.container.ID, 10)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+
+func (dockerobj * aws_Docker) pause_docker() {
+    //Try to pause the container
+    err := dockerobj.client.PauseContainer(dockerobj.container.ID)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+
+func (dockerobj * aws_Docker) unpause_docker() {
+    //Try to unpause the container
+    err := dockerobj.client.UnpauseContainer(dockerobj.container.ID)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+
 func (dockerobj *aws_Docker) addListener() {
 	err := dockerobj.client.AddEventListener(dockerobj.eventsCh)
 	if err != nil {
@@ -287,6 +340,9 @@ func (dockerobj *aws_Docker) removeListener() {
 		log.Fatal(err)
 	}
 }
+
+
+
 
 func (executable *aws_Docker) success() {}
 func (executable *aws_Docker) failure() {}
