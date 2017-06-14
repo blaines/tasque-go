@@ -10,13 +10,17 @@ import (
     "strings"
     "time"
     "bytes"
+
+    "github.com/aws/aws-sdk-go/aws"
+    "github.com/aws/aws-sdk-go/aws/session"
+    "github.com/aws/aws-sdk-go/service/ecs"
 )
 
 
 var hostConfig   *docker.HostConfig
 
-// dockerClient represents a docker client
-type dockerClient interface {
+// DockerInterface represents a docker client
+type DockerInterface interface {
     // CreateContainer creates a docker container, returns an error in case of failure
     CreateContainer(opts docker.CreateContainerOptions) (*docker.Container, error)
     // StartContainer starts a docker container, returns an error in case of failure
@@ -40,13 +44,18 @@ type dockerClient interface {
     RemoveContainer(opts docker.RemoveContainerOptions) error
 }
 
-// getClient returns an instance that implements dockerClient interface
-type getClient func() (dockerClient, error)
+// getDockerInterface returns an instance that implements DockerInterface interface
+type getDockerInterface func() (DockerInterface, error)
 
 //AWSDOCKER is a dockerobj. It is identified by an image id
 type AWSDOCKER struct {
-    id           string
-    getClientFnc getClient
+    id             string
+    getDockerFnc   getDockerInterface
+    taskArn        string
+    timeout        time.Duration
+    client         *docker.Client
+    eventsCh       chan *docker.APIEvents
+    taskDefinition *string
 }
 
 func getDockerHostConfig() *docker.HostConfig {
@@ -110,7 +119,7 @@ func getDockerHostConfig() *docker.HostConfig {
 }
 
 
-func (dockerobj *AWSDOCKER) createContainer(client dockerClient,
+func (dockerobj *AWSDOCKER) createContainer(client DockerInterface,
     imageID string, containerID string, args []string,
     env []string, attachStdout bool) error {
     config := docker.Config{Cmd: args, Image: imageID, Env: env, AttachStdout: attachStdout, AttachStderr: attachStdout}
@@ -124,7 +133,7 @@ func (dockerobj *AWSDOCKER) createContainer(client dockerClient,
     return nil
 }
 
-func (dockerobj *AWSDOCKER) deployImage(client dockerClient, id string,
+func (dockerobj *AWSDOCKER) deployImage(client DockerInterface, id string,
     args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
     opts := docker.BuildImageOptions{
@@ -151,7 +160,7 @@ func (dockerobj *AWSDOCKER) deployImage(client dockerClient, id string,
 //talk to docker daemon using docker Client and build the image
 func (dockerobj *AWSDOCKER) Deploy(id string, args []string, env []string, reader io.Reader) error {
 
-    client, err := dockerobj.getClientFnc()
+    client, err := dockerobj.getDockerFnc()
     switch err {
     case nil:
         if err = dockerobj.deployImage(client, id, args, env, reader); err != nil {
@@ -165,7 +174,7 @@ func (dockerobj *AWSDOCKER) Deploy(id string, args []string, env []string, reade
 
 type BuildSpecFactory func() (io.Reader, error)
 
-func (dockerobj *AWSDOCKER) stopInternal(client dockerClient,
+func (dockerobj *AWSDOCKER) stopInternal(client DockerInterface,
     id string, timeout uint, dontkill bool, dontremove bool) error {
     err := client.StopContainer(id, timeout)
     if err != nil {
@@ -197,7 +206,7 @@ func (dockerobj *AWSDOCKER) Start(imageID string,
     args []string, env []string, builder BuildSpecFactory) error {
 
 
-    client, err := dockerobj.getClientFnc()
+    client, err := dockerobj.getDockerFnc()
     if err != nil {
         log.Printf("start - cannot create client %s", err)
         return err
@@ -322,7 +331,7 @@ func (dockerobj *AWSDOCKER) Start(imageID string,
 
 //Stop stops a running chaincode
 func (dockerobj *AWSDOCKER) Stop(id string, timeout uint, dontkill bool, dontremove bool) error {
-    client, err := dockerobj.getClientFnc()
+    client, err := dockerobj.getDockerFnc()
     if err != nil {
         log.Printf("stop - cannot create client %s", err)
         return err
@@ -337,7 +346,7 @@ func (dockerobj *AWSDOCKER) Stop(id string, timeout uint, dontkill bool, dontrem
 
 //Destroy destroys an image
 func (dockerobj *AWSDOCKER) Destroy(id string, force bool, noprune bool) error {
-    client, err := dockerobj.getClientFnc()
+    client, err := dockerobj.getDockerFnc()
     if err != nil {
         log.Printf("destroy-cannot create client %s", err)
         return err
@@ -355,5 +364,186 @@ func (dockerobj *AWSDOCKER) Destroy(id string, force bool, noprune bool) error {
     return err
 }
 
+func (executable AWSDOCKER) execute(handler MessageHandler) {
+    handler.initialize()
+    if handler.receive() {
+        executable.executableTimeoutHelper(handler)
+    }
+}
+
+func (executable *AWSDOCKER) executableTimeoutHelper(handler MessageHandler) {
+    ch := make(chan error)
+    go func() {
+        ch <- executable.executionHelper(handler.body(), handler.id())
+    }()
+    select {
+    case err := <-ch:
+        if err != nil {
+            log.Printf("E: %s %s", *executable.taskDefinition, err.Error())
+            handler.failure(err)
+        } else {
+            log.Printf("I: %s finished successfully", *executable.taskDefinition)
+            handler.success()
+        }
+    case <-time.After(executable.timeout):
+        err := fmt.Errorf("%s timed out after %f seconds", *executable.taskDefinition, executable.timeout.Seconds())
+        log.Println(err)
+        handler.failure(err)
+    }
+}
+
+func (executable *AWSDOCKER) executionHelper(messageBody *string, messageID *string) error {
+    var err error
+    var taskArn string
+    taskArn, err = executable.startDockerContainer(messageBody, messageID)
+    executable.taskArn = taskArn
+    if err != nil {
+        return err
+    }
+    err = executable.monitorDocker()
+    if err != nil {
+        return err
+    }
+    return nil
+}
+
+func (executable *AWSDOCKER) startDockerContainer(messageBody *string, messageID *string) (string, error) {
+    e := &ECSMetadata{}
+    m := &InstanceMetadata{}
+    m.init()
+    e.init()
+    var ecsCluster *string
+    var containerInstanceID *string
+
+    ecsCluster = aws.String(e.Cluster)
+    containerInstanceID = aws.String(e.ContainerInstanceArn)
+
+    // Start ECS task on self
+    sess, err := session.NewSession(&aws.Config{Region: aws.String("us-west-2")})
+    if err != nil {
+        fmt.Println("failed to create session,", err)
+        return "", err
+    }
+
+    svc := ecs.New(sess)
+
+    params := &ecs.StartTaskInput{
+        ContainerInstances: []*string{
+            containerInstanceID,
+        },
+        TaskDefinition: executable.taskDefinition,
+        Cluster:        ecsCluster,
+        Overrides: &ecs.TaskOverride{
+            ContainerOverrides: []*ecs.ContainerOverride{
+                {
+                    Environment: []*ecs.KeyValuePair{
+                        {
+                            Name:  executable.overridePayloadKey,
+                            Value: aws.String(*messageBody),
+                        },
+                    },
+                    Name: &executable.id,
+                },
+            },
+        },
+        StartedBy: aws.String("tasque"),
+    }
+    resp, err := svc.StartTask(params)
+
+    if err != nil {
+        // Print the error, cast err to awserr.Error to get the Code and
+        // Message from an error.
+        fmt.Println("Error:", err.Error())
+        return "", err
+    }
+
+    // Pretty-print the response data.
+    fmt.Println(resp)
+    if len(resp.Failures) > 0 {
+        var err error
+        // There were errors starting the container
+        reason := resp.Failures[0].Reason
+        if strings.Contains(*reason, "RESOURCE") {
+            err = fmt.Errorf("%s %s The resource or resources requested by the task are unavailable on the given container instance. If the resource is CPU or memory, you may need to add container instances to your cluster", *reason, *resp.Failures[0].Arn)
+        } else if strings.Contains(*reason, "AGENT") {
+            err = fmt.Errorf("%s %s The container instance that you attempted to launch a task onto has an agent which is currently disconnected. In order to prevent extended wait times for task placement, the request was rejected", *reason, *resp.Failures[0].Arn)
+        } else if strings.Contains(*reason, "ATTRIBUTE") {
+            err = fmt.Errorf("%s %s Your task definition contains a parameter that requires a specific container instance attribute that is not available on your container instances. For more information on which attributes are required for specific task definition parameters and agent configuration variables, see Task Definition Parameters and Amazon ECS Container Agent Configuration", *reason, *resp.Failures[0].Arn)
+        } else {
+            // Unrecognized error
+            err = fmt.Errorf("Unrecognized error: '%s' %+v", *reason, resp)
+        }
+        return "", err
+    } else {
+        taskArn := resp.Tasks[0].Containers[0].TaskArn
+        return *taskArn, nil
+    }
+}
+
+func (executable *AWSDOCKER) monitorDocker() error {
+    executable.addListener()
+    // Monitor docker events for sibling Projector task
+    status, err := executable.listenForDie()
+    if err != nil {
+        return err
+    }
+
+    if status == "0" {
+        // status is die
+        log.Printf("[INFO] Execution completed successfully")
+        executable.success()
+        return nil
+    }
+    // non-zero exit
+    log.Printf("[ERROR] Execution completed with non-zero exit status")
+    err = fmt.Errorf("%s died with non-zero exit status (exit code %s)", *executable.taskDefinition, status)
+    executable.failure()
+    return err
+
+}
 
 
+func (executable *AWSDOCKER) listenForDie() (exitCode string, err error) {
+    log.Printf("[INFO] Monitoring Docker events.")
+    log.Printf("[DEBUG] %+v\n", executable)
+    duration := getTimeout()
+    timeout := time.After(duration)
+    defer executable.removeListener()
+    for {
+        select {
+        case msg := <-executable.eventsCh:
+            if msg != nil {
+                matched := msg.Actor.Attributes["com.amazonaws.ecs.task-arn"] == executable.taskArn
+                if matched {
+                    log.Printf("[DEBUG] %+v\n", msg)
+                    switch msg.Action {
+                    case "die":
+                        log.Printf("[INFO] Container die event")
+                        return msg.Actor.Attributes["exitCode"], nil
+                    }
+                }
+            }
+        case <-timeout:
+            log.Printf("[INFO] Instance timeout reached.")
+            err := fmt.Errorf("Docker container %s timed out after %f seconds", *executable.taskDefinition, duration.Seconds())
+            return "timeout", err
+        }
+    }
+}
+
+func (dockerobj *AWSDOCKER) addListener() {
+    err := dockerobj.client.AddEventListener(dockerobj.eventsCh)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+
+func (dockerobj *AWSDOCKER) removeListener() {
+    err := dockerobj.client.RemoveEventListener(dockerobj.eventsCh)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+
+func (executable *AWSDOCKER) success() {}
+func (executable *AWSDOCKER) failure() {}

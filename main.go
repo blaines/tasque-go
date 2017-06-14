@@ -63,16 +63,26 @@ func main() {
 		// OVERRIDE_PAYLOAD_KEY
 		overridePayloadKey = aws.String("TASK_PAYLOAD")
 		tasque := Tasque{}
-		d := &Docker{}
-		d.connect(dockerEndpointPath)
-		tasque.Executable = &AWSECS{
-			docker:                d,
-			ecsTaskDefinition:     ecsTaskDefinition,
-			overrideContainerName: overrideContainerName,
-			overridePayloadKey:    overridePayloadKey,
-			timeout:               getTimeout(),
+
+		if *overrideContainerName == "pipeline-agisoft" {
+			tasque.Executable = &AWSDOCKER{
+				id: 		*overrideContainerName,
+				taskDefinition:     ecsTaskDefinition,
+				timeout:    getTimeout(),
+			}
+			tasque.runWithTimeout()
+		} else {
+			d := &Docker{}
+			d.connect(dockerEndpointPath)
+			tasque.Executable = &AWSECS{
+				docker:                d,
+				ecsTaskDefinition:     ecsTaskDefinition,
+				overrideContainerName: overrideContainerName,
+				overridePayloadKey:    overridePayloadKey,
+				timeout:               getTimeout(),
+			}
+			tasque.runWithTimeout()
 		}
-		tasque.runWithTimeout()
 	} else {
 		// CLI Mode
 		arguments := os.Args[1:]
