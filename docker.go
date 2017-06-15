@@ -10,10 +10,6 @@ import (
     "strings"
     "time"
     "bytes"
-
-    "github.com/aws/aws-sdk-go/aws"
-    "github.com/aws/aws-sdk-go/aws/session"
-    "github.com/aws/aws-sdk-go/service/ecs"
 )
 
 
@@ -394,9 +390,10 @@ func (executable *AWSDOCKER) executableTimeoutHelper(handler MessageHandler) {
 
 func (executable *AWSDOCKER) executionHelper(messageBody *string, messageID *string) error {
     var err error
-    var taskArn string
-    taskArn, err = executable.startDockerContainer(messageBody, messageID)
-    executable.taskArn = taskArn
+
+    args := make([]string, 1)
+    env := make([]string, 1)
+    err = executable.Start("pipeline-agisoft", args, env, nil)
     if err != nil {
         return err
     }
@@ -407,78 +404,6 @@ func (executable *AWSDOCKER) executionHelper(messageBody *string, messageID *str
     return nil
 }
 
-func (executable *AWSDOCKER) startDockerContainer(messageBody *string, messageID *string) (string, error) {
-    e := &ECSMetadata{}
-    m := &InstanceMetadata{}
-    m.init()
-    e.init()
-    var ecsCluster *string
-    var containerInstanceID *string
-
-    ecsCluster = aws.String(e.Cluster)
-    containerInstanceID = aws.String(e.ContainerInstanceArn)
-
-    // Start ECS task on self
-    sess, err := session.NewSession(&aws.Config{Region: aws.String("us-west-2")})
-    if err != nil {
-        fmt.Println("failed to create session,", err)
-        return "", err
-    }
-
-    svc := ecs.New(sess)
-
-    params := &ecs.StartTaskInput{
-        ContainerInstances: []*string{
-            containerInstanceID,
-        },
-        TaskDefinition: executable.taskDefinition,
-        Cluster:        ecsCluster,
-        Overrides: &ecs.TaskOverride{
-            ContainerOverrides: []*ecs.ContainerOverride{
-                {
-                    Environment: []*ecs.KeyValuePair{
-                        {
-                            Name:  executable.overridePayloadKey,
-                            Value: aws.String(*messageBody),
-                        },
-                    },
-                    Name: &executable.id,
-                },
-            },
-        },
-        StartedBy: aws.String("tasque"),
-    }
-    resp, err := svc.StartTask(params)
-
-    if err != nil {
-        // Print the error, cast err to awserr.Error to get the Code and
-        // Message from an error.
-        fmt.Println("Error:", err.Error())
-        return "", err
-    }
-
-    // Pretty-print the response data.
-    fmt.Println(resp)
-    if len(resp.Failures) > 0 {
-        var err error
-        // There were errors starting the container
-        reason := resp.Failures[0].Reason
-        if strings.Contains(*reason, "RESOURCE") {
-            err = fmt.Errorf("%s %s The resource or resources requested by the task are unavailable on the given container instance. If the resource is CPU or memory, you may need to add container instances to your cluster", *reason, *resp.Failures[0].Arn)
-        } else if strings.Contains(*reason, "AGENT") {
-            err = fmt.Errorf("%s %s The container instance that you attempted to launch a task onto has an agent which is currently disconnected. In order to prevent extended wait times for task placement, the request was rejected", *reason, *resp.Failures[0].Arn)
-        } else if strings.Contains(*reason, "ATTRIBUTE") {
-            err = fmt.Errorf("%s %s Your task definition contains a parameter that requires a specific container instance attribute that is not available on your container instances. For more information on which attributes are required for specific task definition parameters and agent configuration variables, see Task Definition Parameters and Amazon ECS Container Agent Configuration", *reason, *resp.Failures[0].Arn)
-        } else {
-            // Unrecognized error
-            err = fmt.Errorf("Unrecognized error: '%s' %+v", *reason, resp)
-        }
-        return "", err
-    } else {
-        taskArn := resp.Tasks[0].Containers[0].TaskArn
-        return *taskArn, nil
-    }
-}
 
 func (executable *AWSDOCKER) monitorDocker() error {
     executable.addListener()
