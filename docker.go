@@ -15,41 +15,14 @@ import (
 
 var hostConfig   *docker.HostConfig
 
-// DockerInterface represents a docker client
-type DockerInterface interface {
-    // CreateContainer creates a docker container, returns an error in case of failure
-    CreateContainer(opts docker.CreateContainerOptions) (*docker.Container, error)
-    // StartContainer starts a docker container, returns an error in case of failure
-    StartContainer(id string, cfg *docker.HostConfig) error
-    // AttachToContainer attaches to a docker container, returns an error in case of
-    // failure
-    AttachToContainer(opts docker.AttachToContainerOptions) error
-    // BuildImage builds an image from a tarball's url or a Dockerfile in the input
-    // stream, returns an error in case of failure
-    BuildImage(opts docker.BuildImageOptions) error
-    // RemoveImageExtended removes a docker image by its name or ID, returns an
-    // error in case of failure
-    RemoveImageExtended(id string, opts docker.RemoveImageOptions) error
-    // StopContainer stops a docker container, killing it after the given timeout
-    // (in seconds). Returns an error in case of failure
-    StopContainer(id string, timeout uint) error
-    // KillContainer sends a signal to a docker container, returns an error in
-    // case of failure
-    KillContainer(opts docker.KillContainerOptions) error
-    // RemoveContainer removes a docker container, returns an error in case of failure
-    RemoveContainer(opts docker.RemoveContainerOptions) error
-}
 
-// getDockerInterface returns an instance that implements DockerInterface interface
-type getDockerInterface func() (DockerInterface, error)
 
 //AWSDOCKER is a dockerobj. It is identified by an image id
 type AWSDOCKER struct {
     id             string
-    getDockerFnc   getDockerInterface
     taskArn        string
     timeout        time.Duration
-    client         *docker.Client
+    docker_client  *docker.Client
     eventsCh       chan *docker.APIEvents
     taskDefinition *string
 }
@@ -115,22 +88,19 @@ func getDockerHostConfig() *docker.HostConfig {
 }
 
 
-func (dockerobj *AWSDOCKER) createContainer(client DockerInterface,
-    imageID string, containerID string, args []string,
-    env []string, attachStdout bool) error {
-    config := docker.Config{Cmd: args, Image: imageID, Env: env, AttachStdout: attachStdout, AttachStderr: attachStdout}
-    copts := docker.CreateContainerOptions{Name: containerID, Config: &config, HostConfig: getDockerHostConfig()}
-    log.Printf("Create container: %s\n", containerID)
-    _, err := client.CreateContainer(copts)
+func (dockerobj *AWSDOCKER) createContainer(imageID string, args []string, env []string, attachStdout bool) (string, error) {
+    docker_config := docker.Config{Cmd: args, Image: imageID, Env: env, AttachStdout: attachStdout, AttachStderr: attachStdout}
+    copts := docker.CreateContainerOptions{Name: imageID, Config: &docker_config, HostConfig: getDockerHostConfig()}
+    log.Printf("Create container for image id: %s\n", imageID)
+    container, err := dockerobj.docker_client.CreateContainer(copts)
     if err != nil {
-        return err
+        return "", err
     }
-    log.Printf("Created container: %s\n", imageID)
-    return nil
+    log.Printf("Created container id: %s\n", container.ID)
+    return container.ID, err
 }
 
-func (dockerobj *AWSDOCKER) deployImage(client DockerInterface, id string,
-    args []string, env []string, reader io.Reader) error {
+func (dockerobj *AWSDOCKER) deployImage(id string, args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
     opts := docker.BuildImageOptions{
         Name:         id,
@@ -139,7 +109,7 @@ func (dockerobj *AWSDOCKER) deployImage(client DockerInterface, id string,
         OutputStream: outputbuf,
     }
 
-    if err := client.BuildImage(opts); err != nil {
+    if err := dockerobj.docker_client.BuildImage(opts); err != nil {
         log.Printf("Error building images: %s", err)
         log.Printf("Image Output:\n********************\n%s\n********************", outputbuf.String())
         return err
@@ -152,34 +122,27 @@ func (dockerobj *AWSDOCKER) deployImage(client DockerInterface, id string,
 
 //Deploy use the reader containing targz to create a docker image
 //for docker inputbuf is tar reader ready for use by docker.Client
-//the stream from end client to peer could directly be this tar stream
+//the stream from end docker_client to peer could directly be this tar stream
 //talk to docker daemon using docker Client and build the image
 func (dockerobj *AWSDOCKER) Deploy(id string, args []string, env []string, reader io.Reader) error {
-
-    client, err := dockerobj.getDockerFnc()
-    switch err {
-    case nil:
-        if err = dockerobj.deployImage(client, id, args, env, reader); err != nil {
-            return err
-        }
-    default:
-        return fmt.Errorf("Error creating docker client: %s", err)
+    if err := dockerobj.deployImage(id, args, env, reader); err != nil {
+        return err
     }
     return nil
 }
 
 type BuildSpecFactory func() (io.Reader, error)
 
-func (dockerobj *AWSDOCKER) stopInternal(client DockerInterface,
-    id string, timeout uint, dontkill bool, dontremove bool) error {
-    err := client.StopContainer(id, timeout)
+func (dockerobj *AWSDOCKER) stopInternal(id string, timeout uint, dontkill bool, dontremove bool) error {
+
+    err := dockerobj.docker_client.StopContainer(id, timeout)
     if err != nil {
         log.Printf("Stop container %s(%s)", id, err)
     } else {
         log.Printf("Stopped container %s", id)
     }
     if !dontkill {
-        err = client.KillContainer(docker.KillContainerOptions{ID: id})
+        err = dockerobj.docker_client.KillContainer(docker.KillContainerOptions{ID: id})
         if err != nil {
             log.Printf("Kill container %s (%s)", id, err)
         } else {
@@ -187,7 +150,7 @@ func (dockerobj *AWSDOCKER) stopInternal(client DockerInterface,
         }
     }
     if !dontremove {
-        err = client.RemoveContainer(docker.RemoveContainerOptions{ID: id, Force: true})
+        err = dockerobj.docker_client.RemoveContainer(docker.RemoveContainerOptions{ID: id, Force: true})
         if err != nil {
             log.Printf("Remove container %s (%s)", id, err)
         } else {
@@ -198,25 +161,17 @@ func (dockerobj *AWSDOCKER) stopInternal(client DockerInterface,
 }
 
 //Start starts a container using a previously created docker image
-func (dockerobj *AWSDOCKER) Start(imageID string,
-    args []string, env []string, builder BuildSpecFactory) error {
-
-
-    client, err := dockerobj.getDockerFnc()
-    if err != nil {
-        log.Printf("start - cannot create client %s", err)
-        return err
-    }
+func (dockerobj *AWSDOCKER) Start(imageID string, args []string, env []string, builder BuildSpecFactory) error {
 
     containerID := strings.Replace(imageID, ":", "_", -1)
     attachStdout := viper.GetBool("dockerobj.docker.attachStdout")
 
     //stop,force remove if necessary
     log.Printf("Cleanup container %s", containerID)
-    dockerobj.stopInternal(client, containerID, 0, false, false)
+    dockerobj.stopInternal(containerID, 0, false, false)
 
     log.Printf("Start container %s", containerID)
-    err = dockerobj.createContainer(client, imageID, containerID, args, env, attachStdout)
+    containerID, err := dockerobj.createContainer(imageID, args, env, attachStdout)
     if err != nil {
         //if image not found try to create image and retry
         if err == docker.ErrNoSuchImage {
@@ -228,12 +183,12 @@ func (dockerobj *AWSDOCKER) Start(imageID string,
                     log.Printf("Error creating image builder: %s", err1)
                 }
 
-                if err1 = dockerobj.deployImage(client, imageID, args, env, reader); err1 != nil {
+                if err1 = dockerobj.deployImage(imageID, args, env, reader); err1 != nil {
                     return err1
                 }
 
                 log.Printf("start-recreated image successfully")
-                if err1 = dockerobj.createContainer(client, imageID, containerID, args, env, attachStdout); err1 != nil {
+                if containerID, err1 = dockerobj.createContainer(imageID, args, env, attachStdout); err1 != nil {
                     log.Printf("start-could not recreate container post recreate image: %s", err1)
                     return err1
                 }
@@ -258,7 +213,7 @@ func (dockerobj *AWSDOCKER) Start(imageID string,
             // attachment completes, and then block until the container is terminated.
             // The returned error is not used outside the scope of this function. Assign the
             // error to a local variable to prevent clobbering the function variable 'err'.
-            err := client.AttachToContainer(docker.AttachToContainerOptions{
+            err := dockerobj.docker_client.AttachToContainer(docker.AttachToContainerOptions{
                 Container:    containerID,
                 OutputStream: w,
                 ErrorStream:  w,
@@ -314,7 +269,7 @@ func (dockerobj *AWSDOCKER) Start(imageID string,
     }
 
     // start container with HostConfig was deprecated since v1.10 and removed in v1.2
-    err = client.StartContainer(containerID, nil)
+    err = dockerobj.docker_client.StartContainer(containerID, nil)
     if err != nil {
         log.Printf("start-could not start container: %s", err)
         return err
@@ -327,14 +282,9 @@ func (dockerobj *AWSDOCKER) Start(imageID string,
 
 //Stop stops a running chaincode
 func (dockerobj *AWSDOCKER) Stop(id string, timeout uint, dontkill bool, dontremove bool) error {
-    client, err := dockerobj.getDockerFnc()
-    if err != nil {
-        log.Printf("stop - cannot create client %s", err)
-        return err
-    }
-    id = strings.Replace(id, ":", "_", -1)
 
-    err = dockerobj.stopInternal(client, id, timeout, dontkill, dontremove)
+    id = strings.Replace(id, ":", "_", -1)
+    err := dockerobj.stopInternal(id, timeout, dontkill, dontremove)
 
     return err
 }
@@ -342,14 +292,9 @@ func (dockerobj *AWSDOCKER) Stop(id string, timeout uint, dontkill bool, dontrem
 
 //Destroy destroys an image
 func (dockerobj *AWSDOCKER) Destroy(id string, force bool, noprune bool) error {
-    client, err := dockerobj.getDockerFnc()
-    if err != nil {
-        log.Printf("destroy-cannot create client %s", err)
-        return err
-    }
     id = strings.Replace(id, ":", "_", -1)
 
-    err = client.RemoveImageExtended(id, docker.RemoveImageOptions{Force: force, NoPrune: noprune})
+    err := dockerobj.docker_client.RemoveImageExtended(id, docker.RemoveImageOptions{Force: force, NoPrune: noprune})
 
     if err != nil {
         log.Printf("error while destroying image: %s", err)
@@ -456,15 +401,28 @@ func (executable *AWSDOCKER) listenForDie() (exitCode string, err error) {
     }
 }
 
+
+func (dockerobj *AWSDOCKER) connect(dockerEndpointPath string) {
+    log.Printf("[INFO] Connecting to Docker API.")
+    endpoint := dockerEndpointPath
+    client, err := docker.NewClient(endpoint)
+    if err != nil {
+        panic(err)
+    }
+    dockerobj.docker_client = client
+    dockerobj.eventsCh = make(chan *docker.APIEvents)
+}
+
+
 func (dockerobj *AWSDOCKER) addListener() {
-    err := dockerobj.client.AddEventListener(dockerobj.eventsCh)
+    err := dockerobj.docker_client.AddEventListener(dockerobj.eventsCh)
     if err != nil {
         log.Fatal(err)
     }
 }
 
 func (dockerobj *AWSDOCKER) removeListener() {
-    err := dockerobj.client.RemoveEventListener(dockerobj.eventsCh)
+    err := dockerobj.docker_client.RemoveEventListener(dockerobj.eventsCh)
     if err != nil {
         log.Fatal(err)
     }

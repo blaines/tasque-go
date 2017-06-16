@@ -71,15 +71,17 @@ func main() {
 		tasque := Tasque{}
 
 		if *deployMethod == "DOCKER" {
-			tasque.Executable = &AWSDOCKER{
-				id: 		*overrideContainerName,
-				taskDefinition:     ecsTaskDefinition,
-				timeout:    getTimeout(),
-			}
+            d := &AWSDOCKER{
+                id: 		*overrideContainerName,
+                timeout:    getTimeout(),
+                taskDefinition: ecsTaskDefinition,
+            }
+            d.connect(dockerEndpointPath)
+			tasque.Executable = d
 			tasque.runWithTimeout()
 		} else {
-			d := &Docker{}
-			d.connect(dockerEndpointPath)
+            d := &Docker{}
+            d.connect(dockerEndpointPath)
 			tasque.Executable = &AWSECS{
 				docker:                d,
 				ecsTaskDefinition:     ecsTaskDefinition,
