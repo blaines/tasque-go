@@ -40,6 +40,7 @@ func main() {
 	var overridePayloadKey *string
 	var overrideContainerName *string
 	var dockerEndpointPath string
+	var deployMethod *string
 
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
@@ -62,9 +63,14 @@ func main() {
 		}
 		// OVERRIDE_PAYLOAD_KEY
 		overridePayloadKey = aws.String("TASK_PAYLOAD")
+		// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
+		deployMethod = aws.String(os.Getenv("DEPLOY_METHOD"))
+		if *deployMethod == "" {
+			*deployMethod = "ECS"
+		}
 		tasque := Tasque{}
 
-		if *overrideContainerName == "pipeline-agisoft" {
+		if *deployMethod == "DOCKER" {
 			tasque.Executable = &AWSDOCKER{
 				id: 		*overrideContainerName,
 				taskDefinition:     ecsTaskDefinition,
