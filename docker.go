@@ -89,8 +89,8 @@ func getDockerHostConfig() *docker.HostConfig {
 
 
 func (dockerobj *AWSDOCKER) createContainer(imageID string, args []string, env []string, attachStdout bool) (string, error) {
-    docker_config := docker.Config{Cmd: args, Image: imageID, Env: env, AttachStdout: attachStdout, AttachStderr: attachStdout}
-    copts := docker.CreateContainerOptions{Name: imageID, Config: &docker_config, HostConfig: getDockerHostConfig()}
+    docker_config := docker.Config{Cmd:[]string{"malaka", ">", "temp"}, Image: imageID, AttachStdout: attachStdout, AttachStderr: attachStdout}
+    copts := docker.CreateContainerOptions{Name: "whalesay-test", Config: &docker_config, HostConfig: getDockerHostConfig()}
     log.Printf("Create container for image id: %s\n", imageID)
     container, err := dockerobj.docker_client.CreateContainer(copts)
     if err != nil {
@@ -164,11 +164,12 @@ func (dockerobj *AWSDOCKER) stopInternal(id string, timeout uint, dontkill bool,
 func (dockerobj *AWSDOCKER) Start(imageID string, args []string, env []string, builder BuildSpecFactory) error {
 
     containerID := strings.Replace(imageID, ":", "_", -1)
-    attachStdout := viper.GetBool("dockerobj.docker.attachStdout")
+    attachStdout := true
 
     //stop,force remove if necessary
-    log.Printf("Cleanup container %s", containerID)
-    dockerobj.stopInternal(containerID, 0, false, false)
+    log.Printf("Cleanup image id %s", containerID)
+
+    //dockerobj.stopInternal(containerID, 0, false, false)
 
     log.Printf("Start container %s", containerID)
     containerID, err := dockerobj.createContainer(imageID, args, env, attachStdout)
@@ -320,7 +321,7 @@ func (executable *AWSDOCKER) executableTimeoutHelper(handler MessageHandler) {
     select {
     case err := <-ch:
         if err != nil {
-            log.Printf("E: %s %s", *executable.taskDefinition, err.Error())
+            log.Printf("XX: %s %s", *executable.taskDefinition, err.Error())
             handler.failure(err)
         } else {
             log.Printf("I: %s finished successfully", *executable.taskDefinition)
@@ -338,7 +339,8 @@ func (executable *AWSDOCKER) executionHelper(messageBody *string, messageID *str
 
     args := make([]string, 1)
     env := make([]string, 1)
-    err = executable.Start("pipeline-agisoft", args, env, nil)
+    env = append(env, *messageBody)
+    err = executable.Start("94bbd31594fa", args, env, nil)
     if err != nil {
         return err
     }
