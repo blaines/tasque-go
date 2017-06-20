@@ -71,10 +71,16 @@ func main() {
 		tasque := Tasque{}
 
 		if *deployMethod == "DOCKER" {
+			arguments := os.Args[1:]
+			var args []string
+			if len(os.Args) > 1 {
+				args = arguments[0:]
+			}
             d := &AWSDOCKER{
-                id: 		*overrideContainerName,
-                timeout:    getTimeout(),
+                container_name: *overrideContainerName,
+                timeout:        getTimeout(),
                 taskDefinition: ecsTaskDefinition,
+				container_args: args,
             }
             d.connect(dockerEndpointPath)
 			tasque.Executable = d
@@ -148,7 +154,7 @@ func getTimeout() time.Duration {
 	taskTimeout := os.Getenv("TASK_TIMEOUT")
 	if taskTimeout == "" {
 		log.Println("Default timeout: 30s")
-		timeout, _ := time.ParseDuration("30s")
+		timeout, _ := time.ParseDuration("30m")
 		return timeout
 	}
 	timeout, err := time.ParseDuration(taskTimeout)

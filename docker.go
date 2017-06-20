@@ -10,21 +10,27 @@ import (
     "strings"
     "time"
     "bytes"
+    "encoding/json"
 )
 
 
 var hostConfig   *docker.HostConfig
 
+type Payload struct {
+    ImageId   string      `json:"ImageId"`
+    MacAddress string `json:"MacAddress"`
+}
 
 
-//AWSDOCKER is a dockerobj. It is identified by an image id
+//AWSDOCKER is a dockerobj. It is identified by an image container_name
 type AWSDOCKER struct {
-    id             string
+    container_name string
     taskArn        string
     timeout        time.Duration
     docker_client  *docker.Client
     eventsCh       chan *docker.APIEvents
     taskDefinition *string
+    container_args []string
 }
 
 func getDockerHostConfig() *docker.HostConfig {
@@ -88,22 +94,27 @@ func getDockerHostConfig() *docker.HostConfig {
 }
 
 
-func (dockerobj *AWSDOCKER) createContainer(imageID string, args []string, env []string, attachStdout bool) (string, error) {
-    docker_config := docker.Config{Cmd:[]string{"malaka", ">", "temp"}, Image: imageID, AttachStdout: attachStdout, AttachStderr: attachStdout}
-    copts := docker.CreateContainerOptions{Name: "whalesay-test", Config: &docker_config, HostConfig: getDockerHostConfig()}
-    log.Printf("Create container for image id: %s\n", imageID)
+func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env []string, attachStdout bool) (string, error) {
+    docker_config := docker.Config{
+        Cmd: dockerobj.container_args,
+        Image: payload.ImageId,
+        AttachStdout: attachStdout,
+        AttachStderr: attachStdout,
+    }
+    copts := docker.CreateContainerOptions{Name: dockerobj.container_name, Config: &docker_config, HostConfig: getDockerHostConfig()}
+    log.Printf("Create container for image container name: %s\n", payload.ImageId)
     container, err := dockerobj.docker_client.CreateContainer(copts)
     if err != nil {
         return "", err
     }
-    log.Printf("Created container id: %s\n", container.ID)
+    log.Printf("Created container container name: %s\n", container.ID)
     return container.ID, err
 }
 
-func (dockerobj *AWSDOCKER) deployImage(id string, args []string, env []string, reader io.Reader) error {
+func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
     opts := docker.BuildImageOptions{
-        Name:         id,
+        Name:         payload.ImageId,
         Pull:         false,
         InputStream:  reader,
         OutputStream: outputbuf,
@@ -115,7 +126,7 @@ func (dockerobj *AWSDOCKER) deployImage(id string, args []string, env []string, 
         return err
     }
 
-    log.Printf("Created image: %s", id)
+    log.Printf("Created image: %s", payload.ImageId)
 
     return nil
 }
@@ -124,8 +135,8 @@ func (dockerobj *AWSDOCKER) deployImage(id string, args []string, env []string, 
 //for docker inputbuf is tar reader ready for use by docker.Client
 //the stream from end docker_client to peer could directly be this tar stream
 //talk to docker daemon using docker Client and build the image
-func (dockerobj *AWSDOCKER) Deploy(id string, args []string, env []string, reader io.Reader) error {
-    if err := dockerobj.deployImage(id, args, env, reader); err != nil {
+func (dockerobj *AWSDOCKER) Deploy(payload Payload, args []string, env []string, reader io.Reader) error {
+    if err := dockerobj.deployImage(payload, args, env, reader); err != nil {
         return err
     }
     return nil
@@ -161,18 +172,21 @@ func (dockerobj *AWSDOCKER) stopInternal(id string, timeout uint, dontkill bool,
 }
 
 //Start starts a container using a previously created docker image
-func (dockerobj *AWSDOCKER) Start(imageID string, args []string, env []string, builder BuildSpecFactory) error {
+func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []string, builder BuildSpecFactory,  messageID *string) error {
 
-    containerID := strings.Replace(imageID, ":", "_", -1)
     attachStdout := true
 
+    payload := Payload{}
+    json.Unmarshal([]byte(*messageBody), &payload)
+
+
     //stop,force remove if necessary
-    log.Printf("Cleanup image id %s", containerID)
+    log.Printf("Cleanup image container_name %s", dockerobj.container_name)
 
-    //dockerobj.stopInternal(containerID, 0, false, false)
+    dockerobj.stopInternal(dockerobj.container_name, 0, false, false)
 
-    log.Printf("Start container %s", containerID)
-    containerID, err := dockerobj.createContainer(imageID, args, env, attachStdout)
+    log.Printf("Start container %s", dockerobj.container_name)
+    containerID, err := dockerobj.createContainer(payload, args, env, attachStdout)
     if err != nil {
         //if image not found try to create image and retry
         if err == docker.ErrNoSuchImage {
@@ -184,12 +198,12 @@ func (dockerobj *AWSDOCKER) Start(imageID string, args []string, env []string, b
                     log.Printf("Error creating image builder: %s", err1)
                 }
 
-                if err1 = dockerobj.deployImage(imageID, args, env, reader); err1 != nil {
+                if err1 = dockerobj.deployImage(payload, args, env, reader); err1 != nil {
                     return err1
                 }
 
                 log.Printf("start-recreated image successfully")
-                if containerID, err1 = dockerobj.createContainer(imageID, args, env, attachStdout); err1 != nil {
+                if containerID, err1 = dockerobj.createContainer(payload, args, env, attachStdout); err1 != nil {
                     log.Printf("start-could not recreate container post recreate image: %s", err1)
                     return err1
                 }
@@ -340,7 +354,8 @@ func (executable *AWSDOCKER) executionHelper(messageBody *string, messageID *str
     args := make([]string, 1)
     env := make([]string, 1)
     env = append(env, *messageBody)
-    err = executable.Start("94bbd31594fa", args, env, nil)
+
+    err = executable.Start(messageBody, args, env, nil, messageID)
     if err != nil {
         return err
     }
