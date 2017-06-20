@@ -3,7 +3,6 @@ package main
 import (
     "log"
     "github.com/fsouza/go-dockerclient"
-    "github.com/spf13/viper"
     "io"
     "fmt"
     "bufio"
@@ -13,8 +12,6 @@ import (
     "encoding/json"
 )
 
-
-var hostConfig   *docker.HostConfig
 
 type Payload struct {
     ImageId   string      `json:"ImageId"`
@@ -33,75 +30,15 @@ type AWSDOCKER struct {
     container_args []string
 }
 
-func getDockerHostConfig() *docker.HostConfig {
-    if hostConfig != nil {
-        return hostConfig
-    }
-    dockerKey := func(key string) string {
-        return "dockerobj.docker.hostConfig." + key
-    }
-    getInt64 := func(key string) int64 {
-        defer func() {
-            if err := recover(); err != nil {
-                log.Printf("load dockerobj.docker.hostConfig.%s failed, error: %v\n", key, err)
-            }
-        }()
-        n := viper.GetInt(dockerKey(key))
-        return int64(n)
-    }
-
-    var logConfig docker.LogConfig
-    err := viper.UnmarshalKey(dockerKey("LogConfig"), &logConfig)
-    if err != nil {
-        log.Printf("load docker HostConfig.LogConfig failed, error: %s\n", err.Error())
-    }
-    networkMode := viper.GetString(dockerKey("NetworkMode"))
-    if networkMode == "" {
-        networkMode = "host"
-    }
-    log.Printf("docker container hostconfig NetworkMode: %s\n", networkMode)
-
-    hostConfig = &docker.HostConfig{
-        CapAdd:  viper.GetStringSlice(dockerKey("CapAdd")),
-        CapDrop: viper.GetStringSlice(dockerKey("CapDrop")),
-
-        DNS:         viper.GetStringSlice(dockerKey("Dns")),
-        DNSSearch:   viper.GetStringSlice(dockerKey("DnsSearch")),
-        ExtraHosts:  viper.GetStringSlice(dockerKey("ExtraHosts")),
-        NetworkMode: networkMode,
-        IpcMode:     viper.GetString(dockerKey("IpcMode")),
-        PidMode:     viper.GetString(dockerKey("PidMode")),
-        UTSMode:     viper.GetString(dockerKey("UTSMode")),
-        LogConfig:   logConfig,
-
-        ReadonlyRootfs:   viper.GetBool(dockerKey("ReadonlyRootfs")),
-        SecurityOpt:      viper.GetStringSlice(dockerKey("SecurityOpt")),
-        CgroupParent:     viper.GetString(dockerKey("CgroupParent")),
-        Memory:           getInt64("Memory"),
-        MemorySwap:       getInt64("MemorySwap"),
-        MemorySwappiness: getInt64("MemorySwappiness"),
-        OOMKillDisable:   viper.GetBool(dockerKey("OomKillDisable")),
-        CPUShares:        getInt64("CpuShares"),
-        CPUSet:           viper.GetString(dockerKey("Cpuset")),
-        CPUSetCPUs:       viper.GetString(dockerKey("CpusetCPUs")),
-        CPUSetMEMs:       viper.GetString(dockerKey("CpusetMEMs")),
-        CPUQuota:         getInt64("CpuQuota"),
-        CPUPeriod:        getInt64("CpuPeriod"),
-        BlkioWeight:      getInt64("BlkioWeight"),
-    }
-
-    return hostConfig
-}
-
-
 func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env []string, attachStdout bool) (string, error) {
     docker_config := docker.Config{
         Cmd: dockerobj.container_args,
         Image: payload.ImageId,
         AttachStdout: attachStdout,
         AttachStderr: attachStdout,
+        MacAddress: payload.MacAddress,
     }
-    copts := docker.CreateContainerOptions{Name: dockerobj.container_name, Config: &docker_config, HostConfig: getDockerHostConfig()}
+    copts := docker.CreateContainerOptions{Name: dockerobj.container_name, Config: &docker_config}
     log.Printf("Create container for image container name: %s\n", payload.ImageId)
     container, err := dockerobj.docker_client.CreateContainer(copts)
     if err != nil {
@@ -283,7 +220,6 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
         }()
     }
 
-    // start container with HostConfig was deprecated since v1.10 and removed in v1.2
     err = dockerobj.docker_client.StartContainer(containerID, nil)
     if err != nil {
         log.Printf("start-could not start container: %s", err)
