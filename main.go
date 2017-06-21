@@ -77,10 +77,10 @@ func main() {
 				args = arguments[0:]
 			}
             d := &AWSDOCKER{
-                container_name: *overrideContainerName,
+                containerName:  *overrideContainerName,
                 timeout:        getTimeout(),
                 taskDefinition: ecsTaskDefinition,
-				container_args: args,
+				containerArgs:  args,
             }
             d.connect(dockerEndpointPath)
 			tasque.Executable = d
