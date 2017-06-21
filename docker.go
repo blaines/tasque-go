@@ -50,14 +50,14 @@ func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env 
 
 func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
-    opts := docker.BuildImageOptions{
-        Name:         payload.ImageId,
-        Pull:         false,
-        InputStream:  reader,
-        OutputStream: outputbuf,
+    result := strings.Split(payload.ImageId, ":")
+    opts := docker.PullImageOptions{
+        Repository: result[0],
+        Tag: result[1],
     }
+    auth := docker.AuthConfiguration{}
 
-    if err := dockerobj.docker_client.BuildImage(opts); err != nil {
+    if err := dockerobj.docker_client.PullImage(opts, auth); err != nil {
         log.Printf("Error building images: %s", err)
         log.Printf("Image Output:\n********************\n%s\n********************", outputbuf.String())
         return err
@@ -127,15 +127,15 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
     if err != nil {
         //if image not found try to create image and retry
         if err == docker.ErrNoSuchImage {
-            if builder != nil {
+            if builder == nil {
                 log.Printf("start-could not find image ...attempt to recreate image %s", err)
+                var err1 error
+                //reader, err1 := builder()
+                //if err1 != nil {
+                //    log.Printf("Error creating image builder: %s", err1)
+                //}
 
-                reader, err1 := builder()
-                if err1 != nil {
-                    log.Printf("Error creating image builder: %s", err1)
-                }
-
-                if err1 = dockerobj.deployImage(payload, args, env, reader); err1 != nil {
+                if err1 = dockerobj.deployImage(payload, args, env, nil); err1 != nil {
                     return err1
                 }
 

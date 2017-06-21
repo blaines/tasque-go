@@ -154,7 +154,7 @@ func getTimeout() time.Duration {
 	taskTimeout := os.Getenv("TASK_TIMEOUT")
 	if taskTimeout == "" {
 		log.Println("Default timeout: 30s")
-		timeout, _ := time.ParseDuration("30m")
+		timeout, _ := time.ParseDuration("30s")
 		return timeout
 	}
 	timeout, err := time.ParseDuration(taskTimeout)
