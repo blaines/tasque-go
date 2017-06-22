@@ -215,10 +215,9 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 			err = fmt.Errorf("Unrecognized error: '%s' %+v", *reason, resp)
 		}
 		return "", err
-	} else {
-		taskArn := resp.Tasks[0].Containers[0].TaskArn
-		return *taskArn, nil
 	}
+	taskArn := resp.Tasks[0].Containers[0].TaskArn
+	return *taskArn, nil
 }
 
 func (executable *AWSECS) monitorDocker() error {

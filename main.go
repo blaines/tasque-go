@@ -40,6 +40,7 @@ func main() {
 	var overridePayloadKey *string
 	var overrideContainerName *string
 	var dockerEndpointPath string
+	var deployMethod *string
 
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
@@ -62,17 +63,40 @@ func main() {
 		}
 		// OVERRIDE_PAYLOAD_KEY
 		overridePayloadKey = aws.String("TASK_PAYLOAD")
-		tasque := Tasque{}
-		d := &Docker{}
-		d.connect(dockerEndpointPath)
-		tasque.Executable = &AWSECS{
-			docker:                d,
-			ecsTaskDefinition:     ecsTaskDefinition,
-			overrideContainerName: overrideContainerName,
-			overridePayloadKey:    overridePayloadKey,
-			timeout:               getTimeout(),
+		// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
+		deployMethod = aws.String(os.Getenv("DEPLOY_METHOD"))
+		if *deployMethod == "" {
+			*deployMethod = "ECS"
 		}
-		tasque.runWithTimeout()
+		tasque := Tasque{}
+
+		if *deployMethod == "DOCKER" {
+			arguments := os.Args[1:]
+			var args []string
+			if len(os.Args) > 1 {
+				args = arguments[0:]
+			}
+            d := &AWSDOCKER{
+                containerName:  *overrideContainerName,
+                timeout:        getTimeout(),
+                taskDefinition: ecsTaskDefinition,
+				containerArgs:  args,
+            }
+            d.connect(dockerEndpointPath)
+			tasque.Executable = d
+			tasque.runWithTimeout()
+		} else {
+            d := &Docker{}
+            d.connect(dockerEndpointPath)
+			tasque.Executable = &AWSECS{
+				docker:                d,
+				ecsTaskDefinition:     ecsTaskDefinition,
+				overrideContainerName: overrideContainerName,
+				overridePayloadKey:    overridePayloadKey,
+				timeout:               getTimeout(),
+			}
+			tasque.runWithTimeout()
+		}
 	} else {
 		// CLI Mode
 		arguments := os.Args[1:]
