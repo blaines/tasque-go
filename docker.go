@@ -9,13 +9,12 @@ import (
     "strings"
     "time"
     "bytes"
-    "encoding/json"
 )
 
-//Payload is the varaible setting requests set by the user
-type Payload struct {
-    ImageID   string      `json:"ImageId"`
-    MacAddress string `json:"MacAddress"`
+//DockerTaskDefinition is the varaible setting requests set by the user
+type DockerTaskDefinition struct {
+    ImageName   string  `json:"ImageName"`
+    MacAddress  string  `json:"MacAddress"`
 }
 
 
@@ -26,19 +25,23 @@ type AWSDOCKER struct {
     timeout              time.Duration
     dockerClient         *docker.Client
     eventsCh             chan *docker.APIEvents
-    containerArgs        []string
+    containerArgs        string
+    dockerTaskDefinition DockerTaskDefinition
 }
 
-func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env []string, attachStdout bool) (string, error) {
+func (dockerobj *AWSDOCKER) createDockerContainer(args []string, env []string, attachStdout bool) (string, error) {
+    var taskPayloadEnv []string
+    taskPayloadEnv = append(taskPayloadEnv, fmt.Sprintf("TASK_PAYLOAD=%s", dockerobj.containerArgs))
+
     dockerConfig := docker.Config{
-        Cmd: dockerobj.containerArgs,
-        Image: payload.ImageID,
+        Env: taskPayloadEnv,
+        Image: dockerobj.dockerTaskDefinition.ImageName,
         AttachStdout: attachStdout,
         AttachStderr: attachStdout,
-        MacAddress: payload.MacAddress,
+        MacAddress: dockerobj.dockerTaskDefinition.MacAddress,
     }
     copts := docker.CreateContainerOptions{Name: dockerobj.containerName, Config: &dockerConfig}
-    log.Printf("Create container for image container name: %s\n", payload.ImageID)
+    log.Printf("Create container for image container name: %s\n",dockerobj.dockerTaskDefinition.ImageName)
     container, err := dockerobj.dockerClient.CreateContainer(copts)
     if err != nil {
         return "", err
@@ -47,9 +50,9 @@ func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env 
     return container.ID, err
 }
 
-func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []string, reader io.Reader) error {
+func (dockerobj *AWSDOCKER) deployImage(args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
-    result := strings.Split(payload.ImageID, ":")
+    result := strings.Split(dockerobj.dockerTaskDefinition.ImageName, ":")
     opts := docker.PullImageOptions{
         Repository: result[0],
         Tag: result[1],
@@ -62,7 +65,7 @@ func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []st
         return err
     }
 
-    log.Printf("Created image: %s", payload.ImageID)
+    log.Printf("Created image: %s", dockerobj.dockerTaskDefinition.ImageName)
 
     return nil
 }
@@ -71,8 +74,8 @@ func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []st
 //for docker inputbuf is tar reader ready for use by docker.Client
 //the stream from end dockerClient to peer could directly be this tar stream
 //talk to docker daemon using docker Client and build the image
-func (dockerobj *AWSDOCKER) Deploy(payload Payload, args []string, env []string, reader io.Reader) error {
-    if err := dockerobj.deployImage(payload, args, env, reader); err != nil {
+func (dockerobj *AWSDOCKER) Deploy(args []string, env []string, reader io.Reader) error {
+    if err := dockerobj.deployImage(args, env, reader); err != nil {
         return err
     }
     return nil
@@ -113,9 +116,7 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
 
     attachStdout := true
 
-    payload := Payload{}
-    json.Unmarshal([]byte(*messageBody), &payload)
-
+    //start ECS Task
 
     //stop,force remove if necessary
     log.Printf("Cleanup image containerName %s", dockerobj.containerName)
@@ -123,7 +124,8 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
     dockerobj.stopInternal(dockerobj.containerName, 0, false, false)
 
     log.Printf("Start container %s", dockerobj.containerName)
-    containerID, err := dockerobj.createContainer(payload, args, env, attachStdout)
+    containerID, err := dockerobj.createDockerContainer(args, env, attachStdout)
+    dockerobj.taskArn = containerID
     if err != nil {
         //if image not found try to create image and retry
         if err == docker.ErrNoSuchImage {
@@ -135,12 +137,12 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
                 //    log.Printf("Error creating image builder: %s", err1)
                 //}
 
-                if err1 = dockerobj.deployImage(payload, args, env, nil); err1 != nil {
+                if err1 = dockerobj.deployImage(args, env, nil); err1 != nil {
                     return err1
                 }
 
                 log.Printf("start-recreated image successfully")
-                if containerID, err1 = dockerobj.createContainer(payload, args, env, attachStdout); err1 != nil {
+                if containerID, err1 = dockerobj.createDockerContainer(args, env, attachStdout); err1 != nil {
                     log.Printf("start-could not recreate container post recreate image: %s", err1)
                     return err1
                 }
@@ -291,6 +293,9 @@ func (dockerobj *AWSDOCKER) executionHelper(messageBody *string, messageID *stri
     env := make([]string, 1)
     env = append(env, *messageBody)
 
+    //taskArn, err = dockerobj.startECSTask(messageBody, messageID)
+    //dockerobj.taskArn = taskArn
+
     err = dockerobj.Start(messageBody, args, env, nil, messageID)
     if err != nil {
         return err
@@ -336,7 +341,7 @@ func (dockerobj *AWSDOCKER) listenForDie() (exitCode string, err error) {
         select {
         case msg := <-dockerobj.eventsCh:
             if msg != nil {
-                matched := msg.Actor.Attributes["com.amazonaws.ecs.task-arn"] == dockerobj.taskArn
+                matched := msg.Actor.ID == dockerobj.taskArn
                 if matched {
                     log.Printf("[DEBUG] %+v\n", msg)
                     switch msg.Action {

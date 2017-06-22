@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+    "encoding/json"
 )
 
 // Tasque hello world
@@ -37,10 +38,11 @@ type Tasque struct {
 
 func main() {
     var taskDefinition *string
-	var overridePayloadKey *string
+    var overridePayloadKey *string
+    var dockerPayloadKey string
 	var overrideContainerName *string
 	var dockerEndpointPath string
-	var deployMethod *string
+    var deployMethod *string
 
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
@@ -53,28 +55,33 @@ func main() {
 			*deployMethod = "ECS"
 		}
 		if *deployMethod == "DOCKER" {
-			// ECS_CONTAINER_NAME
+			// DOCKER_CONTAINER_NAME
 			overrideContainerName = aws.String(os.Getenv("DOCKER_CONTAINER_NAME"))
 			if *overrideContainerName == "" {
 				panic("Environment variable DOCKER_CONTAINER_NAME not set")
 			}
+            // DOCKER_TASK_DEFINITION
+            taskDefinition = aws.String(os.Getenv("DOCKER_TASK_DEFINITION"))
+            if *taskDefinition == "" {
+                panic("Environment variable DOCKER_TASK_DEFINITION not set")
+            }
+
 			// DOCKER_ENDPOINT
 			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
 			if dockerEndpointPath == "" {
 				dockerEndpointPath = "unix:///var/run/docker.sock"
 			}
 			// OVERRIDE_PAYLOAD_KEY
-			overridePayloadKey = aws.String("TASK_PAYLOAD")
+            dockerPayloadKey = os.Getenv("TASK_PAYLOAD")
 
-			arguments := os.Args[1:]
-			var args []string
-			if len(os.Args) > 1 {
-				args = arguments[0:]
-			}
+            overrideTaskDefinition := DockerTaskDefinition{}
+            json.Unmarshal([]byte(*taskDefinition), &overrideTaskDefinition)
+
 			d := &AWSDOCKER{
 				containerName:        *overrideContainerName,
 				timeout:              getTimeout(),
-				containerArgs:        args,
+				containerArgs:        dockerPayloadKey,
+                dockerTaskDefinition: overrideTaskDefinition,
 			}
 			d.connect(dockerEndpointPath)
 			tasque.Executable = d

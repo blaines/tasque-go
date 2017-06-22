@@ -65,3 +65,10 @@ Resources:
 http://man7.org/linux/man-pages/man2/execve.2.html
 http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=b6a2fea39318e43fee84fa7b0b90d68bed92d2ba
 http://unix.stackexchange.com/questions/120642/what-defines-the-maximum-size-for-a-command-single-argument
+
+
+## Brain Dump
+
+TASK_PAYLOAD - different every execution
+
+DOCKER_TASK_DEFINITION - could be json string of params {MacAddress: 00-00-00, MaxMemory: 123gb}
