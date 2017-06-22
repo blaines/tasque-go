@@ -25,19 +25,21 @@ type AWSDOCKER struct {
     timeout              time.Duration
     dockerClient         *docker.Client
     eventsCh             chan *docker.APIEvents
-    containerArgs        []string
+    containerArgs        string
     dockerTaskDefinition DockerTaskDefinition
 }
 
 func (dockerobj *AWSDOCKER) createDockerContainer(args []string, env []string, attachStdout bool) (string, error) {
+    var taskPayloadEnv []string
+    taskPayloadEnv = append(taskPayloadEnv, fmt.Sprintf("TASK_PAYLOAD=%s", dockerobj.containerArgs))
+
     dockerConfig := docker.Config{
-        Cmd: dockerobj.containerArgs,
+        Env: taskPayloadEnv,
         Image: dockerobj.dockerTaskDefinition.ImageName,
         AttachStdout: attachStdout,
         AttachStderr: attachStdout,
         MacAddress: dockerobj.dockerTaskDefinition.MacAddress,
     }
-    println("test: %s", dockerobj.containerArgs[0])
     copts := docker.CreateContainerOptions{Name: dockerobj.containerName, Config: &dockerConfig}
     log.Printf("Create container for image container name: %s\n",dockerobj.dockerTaskDefinition.ImageName)
     container, err := dockerobj.dockerClient.CreateContainer(copts)

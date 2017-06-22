@@ -7,7 +7,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
     "encoding/json"
-    "strings"
 )
 
 // Tasque hello world
@@ -40,7 +39,7 @@ type Tasque struct {
 func main() {
     var taskDefinition *string
     var overridePayloadKey *string
-    var dockerPayloadKey []string
+    var dockerPayloadKey string
 	var overrideContainerName *string
 	var dockerEndpointPath string
     var deployMethod *string
@@ -73,7 +72,7 @@ func main() {
 				dockerEndpointPath = "unix:///var/run/docker.sock"
 			}
 			// OVERRIDE_PAYLOAD_KEY
-            dockerPayloadKey = strings.Fields(os.Getenv("TASK_PAYLOAD"))
+            dockerPayloadKey = os.Getenv("TASK_PAYLOAD")
 
             overrideTaskDefinition := DockerTaskDefinition{}
             json.Unmarshal([]byte(*taskDefinition), &overrideTaskDefinition)
