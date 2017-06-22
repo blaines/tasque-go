@@ -36,7 +36,7 @@ type Tasque struct {
 // }
 
 func main() {
-	var ecsTaskDefinition *string
+    var taskDefinition *string
 	var overridePayloadKey *string
 	var overrideContainerName *string
 	var dockerEndpointPath string
@@ -46,51 +46,63 @@ func main() {
 	if isDocker != "" {
 		log.Println("Docker mode")
 		// Docker Mode
-		// ECS_TASK_DEFINITION
-		ecsTaskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
-		if *ecsTaskDefinition == "" {
-			panic("Environment variable ECS_TASK_DEFINITION not set")
-		}
-		// ECS_CONTAINER_NAME
-		overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
-		if *overrideContainerName == "" {
-			panic("Environment variable ECS_CONTAINER_NAME not set")
-		}
-		// DOCKER_ENDPOINT
-		dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
-		if dockerEndpointPath == "" {
-			dockerEndpointPath = "unix:///var/run/docker.sock"
-		}
-		// OVERRIDE_PAYLOAD_KEY
-		overridePayloadKey = aws.String("TASK_PAYLOAD")
+		tasque := Tasque{}
 		// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
 		deployMethod = aws.String(os.Getenv("DEPLOY_METHOD"))
 		if *deployMethod == "" {
 			*deployMethod = "ECS"
 		}
-		tasque := Tasque{}
-
 		if *deployMethod == "DOCKER" {
+			// ECS_CONTAINER_NAME
+			overrideContainerName = aws.String(os.Getenv("DOCKER_CONTAINER_NAME"))
+			if *overrideContainerName == "" {
+				panic("Environment variable DOCKER_CONTAINER_NAME not set")
+			}
+			// DOCKER_ENDPOINT
+			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
+			if dockerEndpointPath == "" {
+				dockerEndpointPath = "unix:///var/run/docker.sock"
+			}
+			// OVERRIDE_PAYLOAD_KEY
+			overridePayloadKey = aws.String("TASK_PAYLOAD")
+
 			arguments := os.Args[1:]
 			var args []string
 			if len(os.Args) > 1 {
 				args = arguments[0:]
 			}
-            d := &AWSDOCKER{
-                containerName:  *overrideContainerName,
-                timeout:        getTimeout(),
-                taskDefinition: ecsTaskDefinition,
-				containerArgs:  args,
-            }
-            d.connect(dockerEndpointPath)
+			d := &AWSDOCKER{
+				containerName:        *overrideContainerName,
+				timeout:              getTimeout(),
+				containerArgs:        args,
+			}
+			d.connect(dockerEndpointPath)
 			tasque.Executable = d
 			tasque.runWithTimeout()
 		} else {
+			// ECS_TASK_DEFINITION
+			taskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
+			if *taskDefinition == "" {
+				panic("Environment variable ECS_TASK_DEFINITION not set")
+			}
+			// ECS_CONTAINER_NAME
+			overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
+			if *overrideContainerName == "" {
+				panic("Environment variable ECS_CONTAINER_NAME not set")
+			}
+			// DOCKER_ENDPOINT
+			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
+			if dockerEndpointPath == "" {
+				dockerEndpointPath = "unix:///var/run/docker.sock"
+			}
+			// OVERRIDE_PAYLOAD_KEY
+			overridePayloadKey = aws.String("TASK_PAYLOAD")
+			// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
             d := &Docker{}
             d.connect(dockerEndpointPath)
 			tasque.Executable = &AWSECS{
 				docker:                d,
-				ecsTaskDefinition:     ecsTaskDefinition,
+				ecsTaskDefinition:     taskDefinition,
 				overrideContainerName: overrideContainerName,
 				overridePayloadKey:    overridePayloadKey,
 				timeout:               getTimeout(),
