@@ -21,13 +21,13 @@ type Payload struct {
 
 //AWSDOCKER is a dockerobj. It is identified by an image containerName
 type AWSDOCKER struct {
-    containerName  string
-    taskArn        string
-    timeout        time.Duration
-    dockerClient   *docker.Client
-    eventsCh       chan *docker.APIEvents
-    taskDefinition *string
-    containerArgs  []string
+    containerName        string
+    taskArn              string
+    timeout              time.Duration
+    dockerClient         *docker.Client
+    eventsCh             chan *docker.APIEvents
+    dockerTaskDefinition *string
+    containerArgs        []string
 }
 
 func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env []string, attachStdout bool) (string, error) {
@@ -272,14 +272,14 @@ func (dockerobj *AWSDOCKER) dockerobjTimeoutHelper(handler MessageHandler) {
     select {
     case err := <-ch:
         if err != nil {
-            log.Printf("E: %s %s", *dockerobj.taskDefinition, err.Error())
+            log.Printf("E: %s %s", *dockerobj.dockerTaskDefinition, err.Error())
             handler.failure(err)
         } else {
-            log.Printf("I: %s finished successfully", *dockerobj.taskDefinition)
+            log.Printf("I: %s finished successfully", *dockerobj.dockerTaskDefinition)
             handler.success()
         }
     case <-time.After(dockerobj.timeout):
-        err := fmt.Errorf("%s timed out after %f seconds", *dockerobj.taskDefinition, dockerobj.timeout.Seconds())
+        err := fmt.Errorf("%s timed out after %f seconds", *dockerobj.dockerTaskDefinition, dockerobj.timeout.Seconds())
         log.Println(err)
         handler.failure(err)
     }
@@ -320,7 +320,7 @@ func (dockerobj *AWSDOCKER) monitorDocker() error {
     }
     // non-zero exit
     log.Printf("[ERROR] Execution completed with non-zero exit status")
-    err = fmt.Errorf("%s died with non-zero exit status (exit code %s)", *dockerobj.taskDefinition, status)
+    err = fmt.Errorf("%s died with non-zero exit status (exit code %s)", *dockerobj.dockerTaskDefinition, status)
     dockerobj.failure()
     return err
 
@@ -349,7 +349,7 @@ func (dockerobj *AWSDOCKER) listenForDie() (exitCode string, err error) {
             }
         case <-timeout:
             log.Printf("[INFO] Instance timeout reached.")
-            err := fmt.Errorf("Docker container %s timed out after %f seconds", *dockerobj.taskDefinition, duration.Seconds())
+            err := fmt.Errorf("Docker container %s timed out after %f seconds", *dockerobj.dockerTaskDefinition, duration.Seconds())
             return "timeout", err
         }
     }
