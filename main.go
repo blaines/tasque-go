@@ -53,11 +53,6 @@ func main() {
 			*deployMethod = "ECS"
 		}
 		if *deployMethod == "DOCKER" {
-			// ECS_TASK_DEFINITION
-			taskDefinition = aws.String(os.Getenv("DOCKER_TASK_DEFINITION"))
-			if *taskDefinition == "" {
-				panic("Environment variable DOCKER_TASK_DEFINITION not set")
-			}
 			// ECS_CONTAINER_NAME
 			overrideContainerName = aws.String(os.Getenv("DOCKER_CONTAINER_NAME"))
 			if *overrideContainerName == "" {
@@ -79,7 +74,6 @@ func main() {
 			d := &AWSDOCKER{
 				containerName:        *overrideContainerName,
 				timeout:              getTimeout(),
-				dockerTaskDefinition: taskDefinition,
 				containerArgs:        args,
 			}
 			d.connect(dockerEndpointPath)

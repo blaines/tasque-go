@@ -26,7 +26,6 @@ type AWSDOCKER struct {
     timeout              time.Duration
     dockerClient         *docker.Client
     eventsCh             chan *docker.APIEvents
-    dockerTaskDefinition *string
     containerArgs        []string
 }
 
@@ -272,14 +271,14 @@ func (dockerobj *AWSDOCKER) dockerobjTimeoutHelper(handler MessageHandler) {
     select {
     case err := <-ch:
         if err != nil {
-            log.Printf("E: %s %s", *dockerobj.dockerTaskDefinition, err.Error())
+            log.Printf("E: %s %s", dockerobj.containerName, err.Error())
             handler.failure(err)
         } else {
-            log.Printf("I: %s finished successfully", *dockerobj.dockerTaskDefinition)
+            log.Printf("I: %s finished successfully", dockerobj.containerName)
             handler.success()
         }
     case <-time.After(dockerobj.timeout):
-        err := fmt.Errorf("%s timed out after %f seconds", *dockerobj.dockerTaskDefinition, dockerobj.timeout.Seconds())
+        err := fmt.Errorf("%s timed out after %f seconds", dockerobj.containerName, dockerobj.timeout.Seconds())
         log.Println(err)
         handler.failure(err)
     }
@@ -320,7 +319,7 @@ func (dockerobj *AWSDOCKER) monitorDocker() error {
     }
     // non-zero exit
     log.Printf("[ERROR] Execution completed with non-zero exit status")
-    err = fmt.Errorf("%s died with non-zero exit status (exit code %s)", *dockerobj.dockerTaskDefinition, status)
+    err = fmt.Errorf("%s died with non-zero exit status (exit code %s)", dockerobj.containerName, status)
     dockerobj.failure()
     return err
 
@@ -349,7 +348,7 @@ func (dockerobj *AWSDOCKER) listenForDie() (exitCode string, err error) {
             }
         case <-timeout:
             log.Printf("[INFO] Instance timeout reached.")
-            err := fmt.Errorf("Docker container %s timed out after %f seconds", *dockerobj.dockerTaskDefinition, duration.Seconds())
+            err := fmt.Errorf("Docker container %s timed out after %f seconds", dockerobj.containerName, duration.Seconds())
             return "timeout", err
         }
     }
