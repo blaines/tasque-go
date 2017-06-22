@@ -9,38 +9,37 @@ import (
     "strings"
     "time"
     "bytes"
-    "encoding/json"
 )
 
-//Payload is the varaible setting requests set by the user
-type Payload struct {
-    //ImageID   string      `json:"ImageId"`
-    // MacAddress string `json:"MacAddress"`
+//DockerTaskDefinition is the varaible setting requests set by the user
+type DockerTaskDefinition struct {
+    ImageName   string  `json:"ImageName"`
+    MacAddress  string  `json:"MacAddress"`
 }
 
 
 //AWSDOCKER is a dockerobj. It is identified by an image containerName
 type AWSDOCKER struct {
     containerName        string
-    containerMacAddress  string
-    imageName            string
     taskArn              string
     timeout              time.Duration
     dockerClient         *docker.Client
     eventsCh             chan *docker.APIEvents
     containerArgs        []string
+    overridePayloadKey   *string
+    dockerTaskDefinition *DockerTaskDefinition
 }
 
-func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env []string, attachStdout bool) (string, error) {
+func (dockerobj *AWSDOCKER) createContainer(messageBody *string, args []string, env []string, attachStdout bool) (string, error) {
     dockerConfig := docker.Config{
         Cmd: dockerobj.containerArgs,
-        Image: dockerobj.imageName,
+        Image: dockerobj.dockerTaskDefinition.ImageName,
         AttachStdout: attachStdout,
         AttachStderr: attachStdout,
-        MacAddress: dockerobj.containerMacAddress,
+        MacAddress: dockerobj.dockerTaskDefinition.MacAddress,
     }
     copts := docker.CreateContainerOptions{Name: dockerobj.containerName, Config: &dockerConfig}
-    log.Printf("Create container for image container name: %s\n",dockerobj.imageName)
+    log.Printf("Create container for image container name: %s\n",dockerobj.dockerTaskDefinition.ImageName)
     container, err := dockerobj.dockerClient.CreateContainer(copts)
     if err != nil {
         return "", err
@@ -49,9 +48,9 @@ func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env 
     return container.ID, err
 }
 
-func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []string, reader io.Reader) error {
+func (dockerobj *AWSDOCKER) deployImage(messageBody *string, args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
-    result := strings.Split(dockerobj.imageName, ":")
+    result := strings.Split(dockerobj.dockerTaskDefinition.ImageName, ":")
     opts := docker.PullImageOptions{
         Repository: result[0],
         Tag: result[1],
@@ -64,7 +63,7 @@ func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []st
         return err
     }
 
-    log.Printf("Created image: %s", dockerobj.imageName)
+    log.Printf("Created image: %s", dockerobj.dockerTaskDefinition.ImageName)
 
     return nil
 }
@@ -73,8 +72,8 @@ func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []st
 //for docker inputbuf is tar reader ready for use by docker.Client
 //the stream from end dockerClient to peer could directly be this tar stream
 //talk to docker daemon using docker Client and build the image
-func (dockerobj *AWSDOCKER) Deploy(payload Payload, args []string, env []string, reader io.Reader) error {
-    if err := dockerobj.deployImage(payload, args, env, reader); err != nil {
+func (dockerobj *AWSDOCKER) Deploy(messageBody *string, args []string, env []string, reader io.Reader) error {
+    if err := dockerobj.deployImage(messageBody, args, env, reader); err != nil {
         return err
     }
     return nil
@@ -115,9 +114,7 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
 
     attachStdout := true
 
-    payload := Payload{}
-    json.Unmarshal([]byte(*messageBody), &payload)
-
+    //start ECS Task
 
     //stop,force remove if necessary
     log.Printf("Cleanup image containerName %s", dockerobj.containerName)
@@ -125,7 +122,8 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
     dockerobj.stopInternal(dockerobj.containerName, 0, false, false)
 
     log.Printf("Start container %s", dockerobj.containerName)
-    containerID, err := dockerobj.createContainer(payload, args, env, attachStdout)
+    containerID, err := dockerobj.createContainer(messageBody, args, env, attachStdout)
+    dockerobj.taskArn = containerID
     if err != nil {
         //if image not found try to create image and retry
         if err == docker.ErrNoSuchImage {
@@ -137,12 +135,12 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
                 //    log.Printf("Error creating image builder: %s", err1)
                 //}
 
-                if err1 = dockerobj.deployImage(payload, args, env, nil); err1 != nil {
+                if err1 = dockerobj.deployImage(messageBody, args, env, nil); err1 != nil {
                     return err1
                 }
 
                 log.Printf("start-recreated image successfully")
-                if containerID, err1 = dockerobj.createContainer(payload, args, env, attachStdout); err1 != nil {
+                if containerID, err1 = dockerobj.createContainer(messageBody, args, env, attachStdout); err1 != nil {
                     log.Printf("start-could not recreate container post recreate image: %s", err1)
                     return err1
                 }
@@ -288,14 +286,15 @@ func (dockerobj *AWSDOCKER) dockerobjTimeoutHelper(handler MessageHandler) {
 
 func (dockerobj *AWSDOCKER) executionHelper(messageBody *string, messageID *string) error {
     var err error
-    var taskArn string
 
     args := make([]string, 1)
     env := make([]string, 1)
     env = append(env, *messageBody)
 
+    //taskArn, err = dockerobj.startECSTask(messageBody, messageID)
+    //dockerobj.taskArn = taskArn
+
     err = dockerobj.Start(messageBody, args, env, nil, messageID)
-    dockerobj.taskArn = taskArn
     if err != nil {
         return err
     }
@@ -340,7 +339,7 @@ func (dockerobj *AWSDOCKER) listenForDie() (exitCode string, err error) {
         select {
         case msg := <-dockerobj.eventsCh:
             if msg != nil {
-                matched := msg.Actor.Attributes["com.amazonaws.ecs.task-arn"] == dockerobj.taskArn
+                matched := msg.Actor.ID == dockerobj.taskArn
                 if matched {
                     log.Printf("[DEBUG] %+v\n", msg)
                     switch msg.Action {

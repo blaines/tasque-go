@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+    "encoding/json"
 )
 
 // Tasque hello world
@@ -41,8 +42,6 @@ func main() {
 	var overrideContainerName *string
 	var dockerEndpointPath string
     var deployMethod *string
-    var overrideMacAddress *string
-    var dockerImageName *string
 
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
@@ -55,21 +54,17 @@ func main() {
 			*deployMethod = "ECS"
 		}
 		if *deployMethod == "DOCKER" {
-			// ECS_CONTAINER_NAME
+			// DOCKER_CONTAINER_NAME
 			overrideContainerName = aws.String(os.Getenv("DOCKER_CONTAINER_NAME"))
 			if *overrideContainerName == "" {
 				panic("Environment variable DOCKER_CONTAINER_NAME not set")
 			}
-            // Docker Mac Address
-            overrideMacAddress = aws.String(os.Getenv("DOCKER_MAC_ADDRESS"))
-            if *overrideMacAddress == "" {
-                panic("Environment variable DOCKER_MAC_ADDRESS not set")
+            // DOCKER_TASK_DEFINITION
+            taskDefinition = aws.String(os.Getenv("DOCKER_TASK_DEFINITION"))
+            if *taskDefinition == "" {
+                panic("Environment variable DOCKER_TASK_DEFINITION not set")
             }
-            // Docker Mac Address
-            dockerImageName = aws.String(os.Getenv("DOCKER_IMAGE_NAME"))
-            if *dockerImageName == "" {
-                panic("Environment variable DOCKER_IMAGE_NAME not set")
-            }
+
 			// DOCKER_ENDPOINT
 			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
 			if dockerEndpointPath == "" {
@@ -78,17 +73,21 @@ func main() {
 			// OVERRIDE_PAYLOAD_KEY
 			overridePayloadKey = aws.String("TASK_PAYLOAD")
 
+
 			arguments := os.Args[1:]
 			var args []string
 			if len(os.Args) > 1 {
 				args = arguments[0:]
 			}
+            overrideTaskDefinition := DockerTaskDefinition{}
+            json.Unmarshal([]byte(*taskDefinition), &overrideTaskDefinition)
+
 			d := &AWSDOCKER{
 				containerName:        *overrideContainerName,
-                containerMacAddress:  *overrideMacAddress,
-                imageName:            *dockerImageName,
 				timeout:              getTimeout(),
 				containerArgs:        args,
+                overridePayloadKey:   overridePayloadKey,
+                dockerTaskDefinition: &overrideTaskDefinition,
 			}
 			d.connect(dockerEndpointPath)
 			tasque.Executable = d
