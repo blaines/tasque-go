@@ -40,7 +40,9 @@ func main() {
 	var overridePayloadKey *string
 	var overrideContainerName *string
 	var dockerEndpointPath string
-	var deployMethod *string
+    var deployMethod *string
+    var overrideMacAddress *string
+    var dockerImageName *string
 
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
@@ -58,6 +60,16 @@ func main() {
 			if *overrideContainerName == "" {
 				panic("Environment variable DOCKER_CONTAINER_NAME not set")
 			}
+            // Docker Mac Address
+            overrideMacAddress = aws.String(os.Getenv("DOCKER_MAC_ADDRESS"))
+            if *overrideMacAddress == "" {
+                panic("Environment variable DOCKER_MAC_ADDRESS not set")
+            }
+            // Docker Mac Address
+            dockerImageName = aws.String(os.Getenv("DOCKER_IMAGE_NAME"))
+            if *dockerImageName == "" {
+                panic("Environment variable DOCKER_IMAGE_NAME not set")
+            }
 			// DOCKER_ENDPOINT
 			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
 			if dockerEndpointPath == "" {
@@ -73,6 +85,8 @@ func main() {
 			}
 			d := &AWSDOCKER{
 				containerName:        *overrideContainerName,
+                containerMacAddress:  *overrideMacAddress,
+                imageName:            *dockerImageName,
 				timeout:              getTimeout(),
 				containerArgs:        args,
 			}

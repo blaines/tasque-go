@@ -14,14 +14,16 @@ import (
 
 //Payload is the varaible setting requests set by the user
 type Payload struct {
-    ImageID   string      `json:"ImageId"`
-    MacAddress string `json:"MacAddress"`
+    //ImageID   string      `json:"ImageId"`
+    // MacAddress string `json:"MacAddress"`
 }
 
 
 //AWSDOCKER is a dockerobj. It is identified by an image containerName
 type AWSDOCKER struct {
     containerName        string
+    containerMacAddress  string
+    imageName            string
     taskArn              string
     timeout              time.Duration
     dockerClient         *docker.Client
@@ -32,13 +34,13 @@ type AWSDOCKER struct {
 func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env []string, attachStdout bool) (string, error) {
     dockerConfig := docker.Config{
         Cmd: dockerobj.containerArgs,
-        Image: payload.ImageID,
+        Image: dockerobj.imageName,
         AttachStdout: attachStdout,
         AttachStderr: attachStdout,
-        MacAddress: payload.MacAddress,
+        MacAddress: dockerobj.containerMacAddress,
     }
     copts := docker.CreateContainerOptions{Name: dockerobj.containerName, Config: &dockerConfig}
-    log.Printf("Create container for image container name: %s\n", payload.ImageID)
+    log.Printf("Create container for image container name: %s\n",dockerobj.imageName)
     container, err := dockerobj.dockerClient.CreateContainer(copts)
     if err != nil {
         return "", err
@@ -49,7 +51,7 @@ func (dockerobj *AWSDOCKER) createContainer(payload Payload, args []string, env 
 
 func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
-    result := strings.Split(payload.ImageID, ":")
+    result := strings.Split(dockerobj.imageName, ":")
     opts := docker.PullImageOptions{
         Repository: result[0],
         Tag: result[1],
@@ -62,7 +64,7 @@ func (dockerobj *AWSDOCKER) deployImage(payload Payload, args []string, env []st
         return err
     }
 
-    log.Printf("Created image: %s", payload.ImageID)
+    log.Printf("Created image: %s", dockerobj.imageName)
 
     return nil
 }
@@ -286,12 +288,14 @@ func (dockerobj *AWSDOCKER) dockerobjTimeoutHelper(handler MessageHandler) {
 
 func (dockerobj *AWSDOCKER) executionHelper(messageBody *string, messageID *string) error {
     var err error
+    var taskArn string
 
     args := make([]string, 1)
     env := make([]string, 1)
     env = append(env, *messageBody)
 
     err = dockerobj.Start(messageBody, args, env, nil, messageID)
+    dockerobj.taskArn = taskArn
     if err != nil {
         return err
     }
