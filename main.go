@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
     "encoding/json"
+    "strings"
 )
 
 // Tasque hello world
@@ -38,7 +39,8 @@ type Tasque struct {
 
 func main() {
     var taskDefinition *string
-	var overridePayloadKey *string
+    var overridePayloadKey *string
+    var dockerPayloadKey []string
 	var overrideContainerName *string
 	var dockerEndpointPath string
     var deployMethod *string
@@ -71,23 +73,16 @@ func main() {
 				dockerEndpointPath = "unix:///var/run/docker.sock"
 			}
 			// OVERRIDE_PAYLOAD_KEY
-			overridePayloadKey = aws.String("TASK_PAYLOAD")
+            dockerPayloadKey = strings.Fields(os.Getenv("TASK_PAYLOAD"))
 
-
-			arguments := os.Args[1:]
-			var args []string
-			if len(os.Args) > 1 {
-				args = arguments[0:]
-			}
             overrideTaskDefinition := DockerTaskDefinition{}
             json.Unmarshal([]byte(*taskDefinition), &overrideTaskDefinition)
 
 			d := &AWSDOCKER{
 				containerName:        *overrideContainerName,
 				timeout:              getTimeout(),
-				containerArgs:        args,
-                overridePayloadKey:   overridePayloadKey,
-                dockerTaskDefinition: &overrideTaskDefinition,
+				containerArgs:        dockerPayloadKey,
+                dockerTaskDefinition: overrideTaskDefinition,
 			}
 			d.connect(dockerEndpointPath)
 			tasque.Executable = d

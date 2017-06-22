@@ -26,11 +26,10 @@ type AWSDOCKER struct {
     dockerClient         *docker.Client
     eventsCh             chan *docker.APIEvents
     containerArgs        []string
-    overridePayloadKey   *string
-    dockerTaskDefinition *DockerTaskDefinition
+    dockerTaskDefinition DockerTaskDefinition
 }
 
-func (dockerobj *AWSDOCKER) createContainer(messageBody *string, args []string, env []string, attachStdout bool) (string, error) {
+func (dockerobj *AWSDOCKER) createDockerContainer(args []string, env []string, attachStdout bool) (string, error) {
     dockerConfig := docker.Config{
         Cmd: dockerobj.containerArgs,
         Image: dockerobj.dockerTaskDefinition.ImageName,
@@ -38,6 +37,7 @@ func (dockerobj *AWSDOCKER) createContainer(messageBody *string, args []string, 
         AttachStderr: attachStdout,
         MacAddress: dockerobj.dockerTaskDefinition.MacAddress,
     }
+    println("test: %s", dockerobj.containerArgs[0])
     copts := docker.CreateContainerOptions{Name: dockerobj.containerName, Config: &dockerConfig}
     log.Printf("Create container for image container name: %s\n",dockerobj.dockerTaskDefinition.ImageName)
     container, err := dockerobj.dockerClient.CreateContainer(copts)
@@ -48,7 +48,7 @@ func (dockerobj *AWSDOCKER) createContainer(messageBody *string, args []string, 
     return container.ID, err
 }
 
-func (dockerobj *AWSDOCKER) deployImage(messageBody *string, args []string, env []string, reader io.Reader) error {
+func (dockerobj *AWSDOCKER) deployImage(args []string, env []string, reader io.Reader) error {
     outputbuf := bytes.NewBuffer(nil)
     result := strings.Split(dockerobj.dockerTaskDefinition.ImageName, ":")
     opts := docker.PullImageOptions{
@@ -72,8 +72,8 @@ func (dockerobj *AWSDOCKER) deployImage(messageBody *string, args []string, env 
 //for docker inputbuf is tar reader ready for use by docker.Client
 //the stream from end dockerClient to peer could directly be this tar stream
 //talk to docker daemon using docker Client and build the image
-func (dockerobj *AWSDOCKER) Deploy(messageBody *string, args []string, env []string, reader io.Reader) error {
-    if err := dockerobj.deployImage(messageBody, args, env, reader); err != nil {
+func (dockerobj *AWSDOCKER) Deploy(args []string, env []string, reader io.Reader) error {
+    if err := dockerobj.deployImage(args, env, reader); err != nil {
         return err
     }
     return nil
@@ -122,7 +122,7 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
     dockerobj.stopInternal(dockerobj.containerName, 0, false, false)
 
     log.Printf("Start container %s", dockerobj.containerName)
-    containerID, err := dockerobj.createContainer(messageBody, args, env, attachStdout)
+    containerID, err := dockerobj.createDockerContainer(args, env, attachStdout)
     dockerobj.taskArn = containerID
     if err != nil {
         //if image not found try to create image and retry
@@ -135,12 +135,12 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
                 //    log.Printf("Error creating image builder: %s", err1)
                 //}
 
-                if err1 = dockerobj.deployImage(messageBody, args, env, nil); err1 != nil {
+                if err1 = dockerobj.deployImage(args, env, nil); err1 != nil {
                     return err1
                 }
 
                 log.Printf("start-recreated image successfully")
-                if containerID, err1 = dockerobj.createContainer(messageBody, args, env, attachStdout); err1 != nil {
+                if containerID, err1 = dockerobj.createDockerContainer(args, env, attachStdout); err1 != nil {
                     log.Printf("start-could not recreate container post recreate image: %s", err1)
                     return err1
                 }
