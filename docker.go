@@ -14,8 +14,9 @@ import (
 
 //DockerTaskDefinition is the varaible setting requests set by the user
 type DockerTaskDefinition struct {
-	ImageName  string `json:"ImageName"`
-	MacAddress string `json:"MacAddress"`
+	ImageName  string      `json:"ImageName"`
+	MacAddress string      `json:"MacAddress"`
+    Env        []string    `json:"Env"`
 }
 
 //AWSDOCKER is a dockerobj. It is identified by an image containerName
@@ -31,7 +32,9 @@ type AWSDOCKER struct {
 
 func (dockerobj *AWSDOCKER) createDockerContainer(messageBody *string, args []string, env []string, attachStdout bool) (string, error) {
 	var taskPayloadEnv []string
+    fmt.Println(dockerobj.dockerTaskDefinition.Env)
 	taskPayloadEnv = append(taskPayloadEnv, fmt.Sprintf("TASK_PAYLOAD=%s", *messageBody))
+    taskPayloadEnv = append(taskPayloadEnv, dockerobj.dockerTaskDefinition.Env...)
 
 	dockerConfig := docker.Config{
 		Env:          taskPayloadEnv,
@@ -290,7 +293,6 @@ func (dockerobj *AWSDOCKER) executionHelper(messageBody *string, messageID *stri
 	args := make([]string, 1)
 	env := make([]string, 1)
 	env = append(env, *messageBody)
-	fmt.Println(env)
 
 	//taskArn, err = dockerobj.startECSTask(messageBody, messageID)
 	//dockerobj.taskArn = taskArn
