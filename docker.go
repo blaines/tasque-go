@@ -3,20 +3,30 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/fsouza/go-dockerclient"
 )
 
+// AuthData is the authentication information for a docker repository
+type AuthData struct {
+	Auth   string `json:"auth"`
+	Email  string `json:"email"`
+	Server string `json:"server"`
+}
+
 //DockerTaskDefinition is the varaible setting requests set by the user
 type DockerTaskDefinition struct {
-	ImageName  string      `json:"ImageName"`
-	MacAddress string      `json:"MacAddress"`
-    Env        []string    `json:"Env"`
+	ImageName  string   `json:"ImageName"`
+	MacAddress string   `json:"MacAddress"`
+	Env        []string `json:"Env"`
 }
 
 //AWSDOCKER is a dockerobj. It is identified by an image containerName
@@ -32,9 +42,9 @@ type AWSDOCKER struct {
 
 func (dockerobj *AWSDOCKER) createDockerContainer(messageBody *string, args []string, env []string, attachStdout bool) (string, error) {
 	var taskPayloadEnv []string
-    fmt.Println(dockerobj.dockerTaskDefinition.Env)
+	fmt.Println(dockerobj.dockerTaskDefinition.Env)
 	taskPayloadEnv = append(taskPayloadEnv, fmt.Sprintf("TASK_PAYLOAD=%s", *messageBody))
-    taskPayloadEnv = append(taskPayloadEnv, dockerobj.dockerTaskDefinition.Env...)
+	taskPayloadEnv = append(taskPayloadEnv, dockerobj.dockerTaskDefinition.Env...)
 
 	dockerConfig := docker.Config{
 		Env:          taskPayloadEnv,
@@ -60,7 +70,13 @@ func (dockerobj *AWSDOCKER) deployImage(args []string, env []string, reader io.R
 		Repository: result[0],
 		Tag:        result[1],
 	}
-	auth := docker.AuthConfiguration{}
+	// We probably need to configure explicit authorization as the library/docker client doesn't appear
+	// to be authorized to pull images yet.
+	auth, err := fetchAuthConfiguration()
+	if err != nil {
+		log.Printf("Error authenticating to repository. Is DOCKER_AUTH_DATA set?")
+		return err
+	}
 
 	if err := dockerobj.dockerClient.PullImage(opts, auth); err != nil {
 		log.Printf("Error building images: %s", err)
@@ -71,6 +87,23 @@ func (dockerobj *AWSDOCKER) deployImage(args []string, env []string, reader io.R
 	log.Printf("Created image: %s", dockerobj.dockerTaskDefinition.ImageName)
 
 	return nil
+}
+
+// Sets up authentication for pulling docker images from a repository
+func fetchAuthConfiguration() (docker.AuthConfiguration, error) {
+	authDataString := os.Getenv("DOCKER_AUTH_DATA")
+	authData := AuthData{}
+	json.Unmarshal([]byte(authDataString), &authData)
+	decodedToken, err := base64.StdEncoding.DecodeString(string(authData.Auth))
+	if err != nil {
+		return docker.AuthConfiguration{}, err
+	}
+	parts := strings.SplitN(string(decodedToken), ":", 2)
+	return docker.AuthConfiguration{
+		Username:      parts[0],
+		Password:      parts[1],
+		ServerAddress: string(authData.Server),
+	}, nil
 }
 
 //Deploy use the reader containing targz to create a docker image
@@ -127,8 +160,11 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
 	dockerobj.stopInternal(dockerobj.containerName, 0, false, false)
 
 	log.Printf("Start container %s", dockerobj.containerName)
+	// Pull image every time to ensure latest
+	if err := dockerobj.deployImage(args, env, nil); err != nil {
+		return err
+	}
 	containerID, err := dockerobj.createDockerContainer(messageBody, args, env, attachStdout)
-	dockerobj.taskArn = containerID
 	if err != nil {
 		//if image not found try to create image and retry
 		if err == docker.ErrNoSuchImage {
@@ -158,6 +194,7 @@ func (dockerobj *AWSDOCKER) Start(messageBody *string, args []string, env []stri
 			return err
 		}
 	}
+	dockerobj.taskArn = containerID
 
 	if attachStdout {
 		// Launch a few go-threads to manage output streams from the container.
