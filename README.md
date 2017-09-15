@@ -19,6 +19,19 @@ Example:
 TASK_QUEUE_URL='{SQS URL}' AWS_REGION='us-west-2' TASK_TIMEOUT="30s" ./tasque node ../tasque-node-example/worker.js
 ```
 
+ECS Mode
+```
+docker run --rm --net=host \
+  -e DOCKER=true \
+  -e TASK_ACTIVITY_ARN=[ARN] \
+  -e ECS_CONTAINER_NAME=container-in-definition \
+  -e ECS_TASK_DEFINITION=task-definition-name \
+  -e AWS_ACCESS_KEY_ID=[SECRET] \
+  -e AWS_SECRET_ACCESS_KEY=[SECRET] \
+  -e EXIT5=50000 \
+  -v /var/run/docker.sock:/var/run/docker.sock tasque/tasque
+```
+
 ### Environment Variables
 
 TASK_QUEUE_URL

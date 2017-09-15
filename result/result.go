@@ -20,5 +20,6 @@ func (r *Result) SetExit(ex string) {
 		r.Error = err
 	} else {
 		r.Error = ex
+		r.Message, _ = os.Hostname()
 	}
 }

@@ -65,9 +65,10 @@ func (handler *SFNHandler) newClient(client sfn.SFN) {
 func (handler *SFNHandler) receive() bool {
 	for {
 		log.Printf("Waiting for SFN activity data from %s", handler.activityARN)
+		hostname, _ := os.Hostname()
 		getActivityTaskParams := &sfn.GetActivityTaskInput{
 			ActivityArn: aws.String(handler.activityARN),
-			WorkerName:  aws.String("WorkerDemo"),
+			WorkerName:  aws.String(hostname),
 		}
 		receiveMessageResponse, receiveMessageError := handler.client.GetActivityTask(getActivityTaskParams)
 
