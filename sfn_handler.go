@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sfn"
+	"github.com/blaines/tasque-go/result"
 )
 
 // SFNHandler hello world
@@ -102,11 +103,11 @@ func (handler *SFNHandler) success() {
 	}
 }
 
-func (handler *SFNHandler) failure(err error) {
+func (handler *SFNHandler) failure(err result.Result) {
 	sendTaskFailureParams := &sfn.SendTaskFailureInput{
 		TaskToken: aws.String(handler.taskToken),
-		Error:     aws.String("FailureDuringExecution"),
-		Cause:     aws.String(err.Error()),
+		Error:     aws.String(err.Error),
+		Cause:     aws.String(err.Message),
 	}
 	_, deleteMessageError := handler.client.SendTaskFailure(sendTaskFailureParams)
 

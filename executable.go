@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/blaines/tasque-go/result"
 )
 
 // Executable hello world
@@ -21,6 +23,11 @@ type Executable struct {
 	stdout    bufio.Scanner
 	stderr    bufio.Scanner
 	timeout   time.Duration
+	result    result.Result
+}
+
+func (executable *Executable) Result() result.Result {
+	return executable.result
 }
 
 func (executable *Executable) execute(handler MessageHandler) {
@@ -39,7 +46,7 @@ func (executable *Executable) executableTimeoutHelper(handler MessageHandler) {
 	case err := <-ch:
 		if err != nil {
 			log.Printf("E: %s %s", executable.binary, err.Error())
-			handler.failure(err)
+			handler.failure(executable.result)
 		} else {
 			log.Printf("I: %s finished successfully", executable.binary)
 			handler.success()

@@ -1,6 +1,7 @@
 package main
 
 import "os"
+import "github.com/blaines/tasque-go/result"
 
 // ENVHandler hello world
 type ENVHandler struct {
@@ -23,6 +24,6 @@ func (handler *ENVHandler) receive() bool {
 	return true
 }
 
-func (handler *ENVHandler) success()          {}
-func (handler *ENVHandler) failure(err error) {}
-func (handler *ENVHandler) heartbeat()        {}
+func (handler *ENVHandler) success()                  {}
+func (handler *ENVHandler) failure(err result.Result) {}
+func (handler *ENVHandler) heartbeat()                {}

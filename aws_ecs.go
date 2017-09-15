@@ -3,17 +3,17 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ecs"
+	"github.com/blaines/tasque-go/result"
+	"github.com/fsouza/go-dockerclient"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/ec2metadata"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ecs"
-	"github.com/fsouza/go-dockerclient"
 )
 
 // AWSECS hello world
@@ -24,6 +24,7 @@ type AWSECS struct {
 	taskArn               string
 	timeout               time.Duration
 	docker                *Docker
+	result                result.Result
 }
 
 // Docker hello world
@@ -43,6 +44,10 @@ type ECSMetadata struct {
 	Cluster              string `json:"Cluster"`
 	ContainerInstanceArn string `json:"ContainerInstanceArn"`
 	Version              string `json:"Version"`
+}
+
+func (executable *AWSECS) Result() result.Result {
+	return executable.result
 }
 
 func (ecsmeta *ECSMetadata) init() {
@@ -118,7 +123,7 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 	case err := <-ch:
 		if err != nil {
 			log.Printf("E: %s %s", *executable.ecsTaskDefinition, err.Error())
-			handler.failure(err)
+			handler.failure(executable.result)
 		} else {
 			log.Printf("I: %s finished successfully", *executable.ecsTaskDefinition)
 			handler.success()
@@ -126,7 +131,7 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 	case <-time.After(executable.timeout):
 		err := fmt.Errorf("%s timed out after %f seconds", *executable.ecsTaskDefinition, executable.timeout.Seconds())
 		log.Println(err)
-		handler.failure(err)
+		handler.failure(executable.result)
 	}
 }
 
@@ -227,6 +232,7 @@ func (executable *AWSECS) monitorDocker() error {
 	if err != nil {
 		return err
 	}
+	executable.result.SetExit(status)
 
 	if status == "0" {
 		// status is die

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaines/tasque-go/result"
 	"github.com/fsouza/go-dockerclient"
 )
 
@@ -38,6 +39,11 @@ type AWSDOCKER struct {
 	eventsCh             chan *docker.APIEvents
 	containerArgs        string
 	dockerTaskDefinition DockerTaskDefinition
+	result               result.Result
+}
+
+func (executable *AWSDOCKER) Result() result.Result {
+	return executable.result
 }
 
 func (dockerobj *AWSDOCKER) createDockerContainer(messageBody *string, args []string, env []string, attachStdout bool) (string, error) {
@@ -312,7 +318,7 @@ func (dockerobj *AWSDOCKER) dockerobjTimeoutHelper(handler MessageHandler) {
 	case err := <-ch:
 		if err != nil {
 			log.Printf("E: %s %s", dockerobj.containerName, err.Error())
-			handler.failure(err)
+			handler.failure(dockerobj.result)
 		} else {
 			log.Printf("I: %s finished successfully", dockerobj.containerName)
 			handler.success()
@@ -320,7 +326,7 @@ func (dockerobj *AWSDOCKER) dockerobjTimeoutHelper(handler MessageHandler) {
 	case <-time.After(dockerobj.timeout):
 		err := fmt.Errorf("%s timed out after %f seconds", dockerobj.containerName, dockerobj.timeout.Seconds())
 		log.Println(err)
-		handler.failure(err)
+		handler.failure(dockerobj.result)
 	}
 }
 
