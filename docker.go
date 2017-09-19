@@ -42,6 +42,10 @@ type AWSDOCKER struct {
 	result               result.Result
 }
 
+func (dockerobj AWSDOCKER) Execute(handler MessageHandler) {
+	dockerobj.execute(handler)
+}
+
 func (executable *AWSDOCKER) Result() result.Result {
 	return executable.result
 }

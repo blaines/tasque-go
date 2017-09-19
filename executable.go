@@ -26,6 +26,10 @@ type Executable struct {
 	result    result.Result
 }
 
+func (executable *Executable) Execute(handler MessageHandler) {
+	executable.execute(handler)
+}
+
 func (executable *Executable) Result() result.Result {
 	return executable.result
 }

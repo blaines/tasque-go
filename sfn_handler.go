@@ -108,7 +108,7 @@ func (handler *SFNHandler) failure(err result.Result) {
 	sendTaskFailureParams := &sfn.SendTaskFailureInput{
 		TaskToken: aws.String(handler.taskToken),
 		Error:     aws.String(err.Error),
-		Cause:     aws.String(err.Message),
+		Cause:     aws.String(err.Message()),
 	}
 	_, deleteMessageError := handler.client.SendTaskFailure(sendTaskFailureParams)
 

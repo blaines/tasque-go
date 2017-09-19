@@ -22,6 +22,7 @@ type AWSECS struct {
 	overrideContainerName *string
 	overridePayloadKey    *string
 	taskArn               string
+	handler               MessageHandler
 	timeout               time.Duration
 	docker                *Docker
 	result                result.Result
@@ -44,6 +45,11 @@ type ECSMetadata struct {
 	Cluster              string `json:"Cluster"`
 	ContainerInstanceArn string `json:"ContainerInstanceArn"`
 	Version              string `json:"Version"`
+}
+
+func (executable AWSECS) Execute(handler MessageHandler) {
+	executable.handler = handler
+	executable.execute(handler)
 }
 
 func (executable *AWSECS) Result() result.Result {
@@ -115,6 +121,7 @@ func (executable AWSECS) execute(handler MessageHandler) {
 }
 
 func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
+	// Channel receives exit event
 	ch := make(chan error)
 	go func() {
 		ch <- executable.executionHelper(handler.body(), handler.id())
@@ -123,6 +130,11 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 	case err := <-ch:
 		if err != nil {
 			log.Printf("E: %s %s", *executable.ecsTaskDefinition, err.Error())
+			if strings.Contains(err.Error(), "InvalidParameterException") {
+				executable.result.SetExit("PARAMETER")
+			} else if executable.result.Exit == "" {
+				executable.result.SetExit("UNKNOWN")
+			}
 			handler.failure(executable.result)
 		} else {
 			log.Printf("I: %s finished successfully", *executable.ecsTaskDefinition)
@@ -131,6 +143,7 @@ func (executable *AWSECS) executableTimeoutHelper(handler MessageHandler) {
 	case <-time.After(executable.timeout):
 		err := fmt.Errorf("%s timed out after %f seconds", *executable.ecsTaskDefinition, executable.timeout.Seconds())
 		log.Println(err)
+		executable.result.SetExit("TIMEOUT")
 		handler.failure(executable.result)
 	}
 }
@@ -209,14 +222,24 @@ func (executable *AWSECS) startECSContainer(messageBody *string, messageID *stri
 		var err error
 		// There were errors starting the container
 		reason := resp.Failures[0].Reason
-		if strings.Contains(*reason, "RESOURCE") {
+		if strings.Contains(*reason, "CPU") {
+			executable.result.SetExit("CPU")
+			err = fmt.Errorf("%s %s The cpu requested by the task is unavailable on the given container instance. You may need to add container instances to your cluster", *reason, *resp.Failures[0].Arn)
+		} else if strings.Contains(*reason, "MEMORY") {
+			executable.result.SetExit("MEMORY")
+			err = fmt.Errorf("%s %s The memory requested by the task is unavailable on the given container instance. You may need to add container instances to your cluster", *reason, *resp.Failures[0].Arn)
+		} else if strings.Contains(*reason, "RESOURCE") {
+			executable.result.SetExit("RESOURCE")
 			err = fmt.Errorf("%s %s The resource or resources requested by the task are unavailable on the given container instance. If the resource is CPU or memory, you may need to add container instances to your cluster", *reason, *resp.Failures[0].Arn)
 		} else if strings.Contains(*reason, "AGENT") {
+			executable.result.SetExit("AGENT")
 			err = fmt.Errorf("%s %s The container instance that you attempted to launch a task onto has an agent which is currently disconnected. In order to prevent extended wait times for task placement, the request was rejected", *reason, *resp.Failures[0].Arn)
 		} else if strings.Contains(*reason, "ATTRIBUTE") {
+			executable.result.SetExit("ATTRIBUTE")
 			err = fmt.Errorf("%s %s Your task definition contains a parameter that requires a specific container instance attribute that is not available on your container instances. For more information on which attributes are required for specific task definition parameters and agent configuration variables, see Task Definition Parameters and Amazon ECS Container Agent Configuration", *reason, *resp.Failures[0].Arn)
 		} else {
 			// Unrecognized error
+			executable.result.SetExit("UNKNOWN")
 			err = fmt.Errorf("Unrecognized error: '%s' %+v", *reason, resp)
 		}
 		return "", err
@@ -253,7 +276,11 @@ func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 	log.Printf("[DEBUG] %+v\n", executable.docker)
 	duration := getTimeout()
 	timeout := time.After(duration)
-	defer executable.docker.removeListener()
+	ticker := time.NewTicker(getHeartbeatTime())
+	defer func() {
+		executable.docker.removeListener()
+		ticker.Stop()
+	}()
 	for {
 		select {
 		case msg := <-executable.docker.eventsCh:
@@ -265,6 +292,24 @@ func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 					case "die":
 						log.Printf("[INFO] Container die event")
 						return msg.Actor.Attributes["exitCode"], nil
+					case "start":
+						log.Printf("[INFO] Container start event")
+						executable.result.SetHost(msg.ID[0:12])
+						// Ticker to check docker container status
+						go func() {
+							for t := range ticker.C {
+								container, err := executable.docker.client.InspectContainer(msg.ID)
+								if err != nil {
+									log.Println(fmt.Errorf("There was an error checking container status %s", err.Error()))
+								}
+								if container.State.Running == true {
+									executable.handler.heartbeat()
+									log.Println("Heartbeat", t)
+								} else {
+									log.Printf("Container state is %s", container.State.Status)
+								}
+							}
+						}()
 					}
 				}
 			}

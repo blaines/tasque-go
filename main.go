@@ -162,7 +162,7 @@ func (tasque *Tasque) runWithTimeout() {
 	// 	go func() {
 	// 		defer wg.Done()
 	// 		for i := 0; i < 5; i++ {
-	tasque.Executable.execute(tasque.Handler)
+	tasque.Executable.Execute(tasque.Handler)
 	// 		}
 	// 	}()
 	// }
@@ -171,6 +171,22 @@ func (tasque *Tasque) runWithTimeout() {
 
 func getTimeout() time.Duration {
 	taskTimeout := os.Getenv("TASK_TIMEOUT")
+	if taskTimeout == "" {
+		log.Println("Default timeout: 30s")
+		timeout, _ := time.ParseDuration("30s")
+		return timeout
+	}
+	timeout, err := time.ParseDuration(taskTimeout)
+	if err != nil {
+		log.Println(err.Error())
+		os.Exit(1)
+		return time.Duration(0)
+	}
+	return timeout
+}
+
+func getHeartbeatTime() time.Duration {
+	taskTimeout := os.Getenv("TASK_HEARTBEAT")
 	if taskTimeout == "" {
 		log.Println("Default timeout: 30s")
 		timeout, _ := time.ParseDuration("30s")
