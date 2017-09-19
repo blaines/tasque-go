@@ -13,7 +13,7 @@
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -o tasque .
-	docker build -t tasque/tasque:develop .
+	docker build -t tasque/tasque .
 
 upload:
-	docker push tasque/tasque:develop
+	docker push tasque/tasque
