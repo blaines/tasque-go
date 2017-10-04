@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -71,12 +70,10 @@ func inputPipe(pipe io.WriteCloser, inputString *string, wg *sync.WaitGroup, e *
 
 func outputPipe(pipe io.ReadCloser, annotation string, wg *sync.WaitGroup, e *error) {
 	wg.Add(1)
+	pipeScanner := bufio.NewScanner(pipe)
 	go func() {
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, pipe); err == nil {
-			log.Printf("%s %s\n", annotation, string(buf.Bytes()))
-		} else {
-			*e = err
+		for pipeScanner.Scan() {
+			log.Printf("%s %s\n", annotation, pipeScanner.Text())
 		}
 		wg.Done()
 	}()
@@ -113,7 +110,7 @@ func executionHelper(binary string, executableArguments []string, messageBody *s
 
 	var wg sync.WaitGroup
 	inputPipe(stdinPipe, messageBody, &wg, &err)
-	outputPipe(stderrPipe, fmt.Sprintf("%s %s", *messageID, "!"), &wg, &err)
+	outputPipe(stderrPipe, fmt.Sprintf("%s %s", *messageID, "ERROR"), &wg, &err)
 	outputPipe(stdoutPipe, fmt.Sprintf("%s", *messageID), &wg, &err)
 	wg.Wait()
 	if err != nil {
