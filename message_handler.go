@@ -1,5 +1,7 @@
 package main
 
+import "github.com/blaines/tasque-go/result"
+
 // MessageHandler hello world
 type MessageHandler interface {
 	id() *string
@@ -7,6 +9,6 @@ type MessageHandler interface {
 	initialize()
 	receive() bool
 	success()
-	failure(err error)
+	failure(err result.Result)
 	heartbeat()
 }

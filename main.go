@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"encoding/json"
 	"github.com/aws/aws-sdk-go/aws"
 )
 
@@ -36,43 +37,85 @@ type Tasque struct {
 // }
 
 func main() {
-	var ecsTaskDefinition *string
+	var taskDefinition *string
 	var overridePayloadKey *string
+	var dockerPayloadKey string
 	var overrideContainerName *string
 	var dockerEndpointPath string
+	var deployMethod *string
 
 	isDocker := os.Getenv("DOCKER")
 	if isDocker != "" {
 		log.Println("Docker mode")
 		// Docker Mode
-		// ECS_TASK_DEFINITION
-		ecsTaskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
-		if *ecsTaskDefinition == "" {
-			panic("Environment variable ECS_TASK_DEFINITION not set")
-		}
-		// ECS_CONTAINER_NAME
-		overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
-		if *overrideContainerName == "" {
-			panic("Environment variable ECS_CONTAINER_NAME not set")
-		}
-		// DOCKER_ENDPOINT
-		dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
-		if dockerEndpointPath == "" {
-			dockerEndpointPath = "unix:///var/run/docker.sock"
-		}
-		// OVERRIDE_PAYLOAD_KEY
-		overridePayloadKey = aws.String("TASK_PAYLOAD")
 		tasque := Tasque{}
-		d := &Docker{}
-		d.connect(dockerEndpointPath)
-		tasque.Executable = &AWSECS{
-			docker:                d,
-			ecsTaskDefinition:     ecsTaskDefinition,
-			overrideContainerName: overrideContainerName,
-			overridePayloadKey:    overridePayloadKey,
-			timeout:               getTimeout(),
+		// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
+		deployMethod = aws.String(os.Getenv("DEPLOY_METHOD"))
+		if *deployMethod == "" {
+			*deployMethod = "ECS"
 		}
-		tasque.runWithTimeout()
+		if *deployMethod == "DOCKER" {
+			// DOCKER_CONTAINER_NAME
+			overrideContainerName = aws.String(os.Getenv("DOCKER_CONTAINER_NAME"))
+			if *overrideContainerName == "" {
+				panic("Environment variable DOCKER_CONTAINER_NAME not set")
+			}
+			// DOCKER_TASK_DEFINITION
+			taskDefinition = aws.String(os.Getenv("DOCKER_TASK_DEFINITION"))
+			if *taskDefinition == "" {
+				panic("Environment variable DOCKER_TASK_DEFINITION not set")
+			}
+
+			// DOCKER_ENDPOINT
+			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
+			if dockerEndpointPath == "" {
+				dockerEndpointPath = "unix:///var/run/docker.sock"
+			}
+			// OVERRIDE_PAYLOAD_KEY
+			dockerPayloadKey = os.Getenv("TASK_PAYLOAD")
+
+			overrideTaskDefinition := DockerTaskDefinition{}
+			json.Unmarshal([]byte(*taskDefinition), &overrideTaskDefinition)
+
+			d := &AWSDOCKER{
+				containerName:        *overrideContainerName,
+				timeout:              getTimeout(),
+				containerArgs:        dockerPayloadKey,
+				dockerTaskDefinition: overrideTaskDefinition,
+			}
+			d.connect(dockerEndpointPath)
+			tasque.Executable = d
+			tasque.runWithTimeout()
+		} else {
+			// ECS_TASK_DEFINITION
+			taskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
+			if *taskDefinition == "" {
+				panic("Environment variable ECS_TASK_DEFINITION not set")
+			}
+			// ECS_CONTAINER_NAME
+			overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
+			if *overrideContainerName == "" {
+				panic("Environment variable ECS_CONTAINER_NAME not set")
+			}
+			// DOCKER_ENDPOINT
+			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
+			if dockerEndpointPath == "" {
+				dockerEndpointPath = "unix:///var/run/docker.sock"
+			}
+			// OVERRIDE_PAYLOAD_KEY
+			overridePayloadKey = aws.String("TASK_PAYLOAD")
+			// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
+			d := &Docker{}
+			d.connect(dockerEndpointPath)
+			tasque.Executable = &AWSECS{
+				docker:                d,
+				ecsTaskDefinition:     taskDefinition,
+				overrideContainerName: overrideContainerName,
+				overridePayloadKey:    overridePayloadKey,
+				timeout:               getTimeout(),
+			}
+			tasque.runWithTimeout()
+		}
 	} else {
 		// CLI Mode
 		arguments := os.Args[1:]
@@ -119,7 +162,7 @@ func (tasque *Tasque) runWithTimeout() {
 	// 	go func() {
 	// 		defer wg.Done()
 	// 		for i := 0; i < 5; i++ {
-	tasque.Executable.execute(tasque.Handler)
+	tasque.Executable.Execute(tasque.Handler)
 	// 		}
 	// 	}()
 	// }
@@ -128,6 +171,22 @@ func (tasque *Tasque) runWithTimeout() {
 
 func getTimeout() time.Duration {
 	taskTimeout := os.Getenv("TASK_TIMEOUT")
+	if taskTimeout == "" {
+		log.Println("Default timeout: 30s")
+		timeout, _ := time.ParseDuration("30s")
+		return timeout
+	}
+	timeout, err := time.ParseDuration(taskTimeout)
+	if err != nil {
+		log.Println(err.Error())
+		os.Exit(1)
+		return time.Duration(0)
+	}
+	return timeout
+}
+
+func getHeartbeatTime() time.Duration {
+	taskTimeout := os.Getenv("TASK_HEARTBEAT")
 	if taskTimeout == "" {
 		log.Println("Default timeout: 30s")
 		timeout, _ := time.ParseDuration("30s")
