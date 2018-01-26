@@ -4,7 +4,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -41,12 +40,12 @@ func (handler *SQSHandler) body() *string {
 
 func (handler *SQSHandler) initialize() {
 	handler.newClient(sqs.New(session.New(), &aws.Config{
+		Region:     &handler.awsRegion,
 		MaxRetries: aws.Int(30),
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}))
-	handler.queueURL = os.Getenv("TASK_QUEUE_URL")
 }
 
 func (handler *SQSHandler) newClient(client sqsiface.SQSAPI) {

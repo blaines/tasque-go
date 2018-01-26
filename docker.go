@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -40,6 +39,7 @@ type AWSDOCKER struct {
 	containerArgs        string
 	dockerTaskDefinition DockerTaskDefinition
 	result               result.Result
+	authData             string
 }
 
 func (dockerobj AWSDOCKER) Execute(handler MessageHandler) {
@@ -76,13 +76,23 @@ func (dockerobj *AWSDOCKER) createDockerContainer(messageBody *string, args []st
 func (dockerobj *AWSDOCKER) deployImage(args []string, env []string, reader io.Reader) error {
 	outputbuf := bytes.NewBuffer(nil)
 	result := strings.Split(dockerobj.dockerTaskDefinition.ImageName, ":")
+	resultRepository := result[0]
+	var resultTag string
+	if len(result) > 1 {
+		resultTag = result[1]
+	}
+	// Our implementation here is not incredibly robust (missing Registry)
 	opts := docker.PullImageOptions{
-		Repository: result[0],
-		Tag:        result[1],
+		Repository: resultRepository,
+		Tag:        resultTag,
 	}
 	// We probably need to configure explicit authorization as the library/docker client doesn't appear
 	// to be authorized to pull images yet.
-	auth, err := fetchAuthConfiguration()
+	if dockerobj.authData == "" {
+		panic("DOCKER_AUTH_DATA is required for this operation")
+	}
+
+	auth, err := fetchAuthConfiguration(dockerobj.authData)
 	if err != nil {
 		log.Printf("Error authenticating to repository. Is DOCKER_AUTH_DATA set?")
 		return err
@@ -100,10 +110,9 @@ func (dockerobj *AWSDOCKER) deployImage(args []string, env []string, reader io.R
 }
 
 // Sets up authentication for pulling docker images from a repository
-func fetchAuthConfiguration() (docker.AuthConfiguration, error) {
-	authDataString := os.Getenv("DOCKER_AUTH_DATA")
+func fetchAuthConfiguration(authDataStr string) (docker.AuthConfiguration, error) {
 	authData := AuthData{}
-	json.Unmarshal([]byte(authDataString), &authData)
+	json.Unmarshal([]byte(authDataStr), &authData)
 	decodedToken, err := base64.StdEncoding.DecodeString(string(authData.Auth))
 	if err != nil {
 		return docker.AuthConfiguration{}, err
@@ -380,8 +389,7 @@ func (dockerobj *AWSDOCKER) monitorDocker() error {
 func (dockerobj *AWSDOCKER) listenForDie() (exitCode string, err error) {
 	log.Printf("[INFO] Monitoring Docker events.")
 	log.Printf("[DEBUG] %+v\n", dockerobj)
-	duration := getTimeout()
-	timeout := time.After(duration)
+	timeout := time.After(dockerobj.timeout)
 	defer dockerobj.removeListener()
 	for {
 		select {
@@ -399,7 +407,7 @@ func (dockerobj *AWSDOCKER) listenForDie() (exitCode string, err error) {
 			}
 		case <-timeout:
 			log.Printf("[INFO] Instance timeout reached.")
-			err := fmt.Errorf("Docker container %s timed out after %f seconds", dockerobj.containerName, duration.Seconds())
+			err := fmt.Errorf("Docker container %s timed out after %f seconds", dockerobj.containerName, dockerobj.timeout.Seconds())
 			return "timeout", err
 		}
 	}

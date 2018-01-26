@@ -1,3 +1,3 @@
 FROM centurylink/ca-certs
-ADD tasque /
-CMD ["/tasque"]
+ADD tasque /usr/bin/
+CMD ["/usr/bin/tasque"]

@@ -21,6 +21,7 @@ type AWSECS struct {
 	ecsTaskDefinition     *string
 	overrideContainerName *string
 	overridePayloadKey    *string
+	heartbeatDuration     time.Duration
 	taskArn               string
 	handler               MessageHandler
 	timeout               time.Duration
@@ -274,9 +275,8 @@ func (executable *AWSECS) monitorDocker() error {
 func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 	log.Printf("[INFO] Monitoring Docker events.")
 	log.Printf("[DEBUG] %+v\n", executable.docker)
-	duration := getTimeout()
-	timeout := time.After(duration)
-	ticker := time.NewTicker(getHeartbeatTime())
+	timeout := time.After(executable.timeout)
+	ticker := time.NewTicker(executable.heartbeatDuration)
 	defer func() {
 		executable.docker.removeListener()
 		ticker.Stop()
@@ -315,7 +315,7 @@ func (executable *AWSECS) listenForDie() (exitCode string, err error) {
 			}
 		case <-timeout:
 			log.Printf("[INFO] Instance timeout reached.")
-			err := fmt.Errorf("Docker container %s timed out after %f seconds", *executable.ecsTaskDefinition, duration.Seconds())
+			err := fmt.Errorf("Docker container %s timed out after %f seconds", *executable.ecsTaskDefinition, executable.timeout.Seconds())
 			return "timeout", err
 		}
 	}

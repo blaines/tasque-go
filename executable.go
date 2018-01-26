@@ -80,6 +80,7 @@ func outputPipe(pipe io.ReadCloser, annotation string, wg *sync.WaitGroup, e *er
 }
 
 func executionHelper(binary string, executableArguments []string, messageBody *string, messageID *string) error {
+	log.Println("executableArguments", executableArguments)
 	var exitCode int
 	var err error
 	var stdinPipe io.WriteCloser

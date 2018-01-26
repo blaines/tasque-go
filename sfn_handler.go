@@ -55,7 +55,6 @@ func (handler *SFNHandler) initialize() {
 	// })
 	client := sfn.New(sess)
 	handler.newClient(*client)
-	handler.activityARN = os.Getenv("TASK_ACTIVITY_ARN")
 }
 
 func (handler *SFNHandler) newClient(client sfn.SFN) {

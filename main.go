@@ -1,12 +1,31 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"encoding/json"
-	"github.com/aws/aws-sdk-go/aws"
+	"gopkg.in/urfave/cli.v1"
+)
+
+const (
+	StepFunctionArnFormat = "arn:aws:states:[^:]+:[^:]+:activity:[^:]+"
+	SQSURLFormat          = "https://sqs.([a-zA-Z0-9-]+).amazonaws.com/[^/]+/.+"
+)
+
+var (
+	// Version is set by Makefile ldflags
+	Version = "undefined"
+	// BuildDate is set by Makefile ldflags
+	BuildDate string
+	// GitCommit is set by Makefile ldflags
+	GitCommit string
+	// GitBranch is set by Makefile ldflags
+	GitBranch string
+	// GitSummary is set by Makefile ldflags
+	GitSummary string
 )
 
 // Tasque hello world
@@ -37,124 +56,156 @@ type Tasque struct {
 // }
 
 func main() {
-	var taskDefinition *string
-	var overridePayloadKey *string
-	var dockerPayloadKey string
-	var overrideContainerName *string
-	var dockerEndpointPath string
-	var deployMethod *string
-
-	isDocker := os.Getenv("DOCKER")
-	if isDocker != "" {
-		log.Println("Docker mode")
-		// Docker Mode
-		tasque := Tasque{}
-		// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
-		deployMethod = aws.String(os.Getenv("DEPLOY_METHOD"))
-		if *deployMethod == "" {
-			*deployMethod = "ECS"
-		}
-		if *deployMethod == "DOCKER" {
-			// DOCKER_CONTAINER_NAME
-			overrideContainerName = aws.String(os.Getenv("DOCKER_CONTAINER_NAME"))
-			if *overrideContainerName == "" {
-				panic("Environment variable DOCKER_CONTAINER_NAME not set")
-			}
-			// DOCKER_TASK_DEFINITION
-			taskDefinition = aws.String(os.Getenv("DOCKER_TASK_DEFINITION"))
-			if *taskDefinition == "" {
-				panic("Environment variable DOCKER_TASK_DEFINITION not set")
-			}
-
-			// DOCKER_ENDPOINT
-			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
-			if dockerEndpointPath == "" {
-				dockerEndpointPath = "unix:///var/run/docker.sock"
-			}
-			// OVERRIDE_PAYLOAD_KEY
-			dockerPayloadKey = os.Getenv("TASK_PAYLOAD")
-
-			overrideTaskDefinition := DockerTaskDefinition{}
-			json.Unmarshal([]byte(*taskDefinition), &overrideTaskDefinition)
-
-			d := &AWSDOCKER{
-				containerName:        *overrideContainerName,
-				timeout:              getTimeout(),
-				containerArgs:        dockerPayloadKey,
-				dockerTaskDefinition: overrideTaskDefinition,
-			}
-			d.connect(dockerEndpointPath)
-			tasque.Executable = d
-			tasque.runWithTimeout()
-		} else {
-			// ECS_TASK_DEFINITION
-			taskDefinition = aws.String(os.Getenv("ECS_TASK_DEFINITION"))
-			if *taskDefinition == "" {
-				panic("Environment variable ECS_TASK_DEFINITION not set")
-			}
-			// ECS_CONTAINER_NAME
-			overrideContainerName = aws.String(os.Getenv("ECS_CONTAINER_NAME"))
-			if *overrideContainerName == "" {
-				panic("Environment variable ECS_CONTAINER_NAME not set")
-			}
-			// DOCKER_ENDPOINT
-			dockerEndpointPath = os.Getenv("DOCKER_ENDPOINT")
-			if dockerEndpointPath == "" {
-				dockerEndpointPath = "unix:///var/run/docker.sock"
-			}
-			// OVERRIDE_PAYLOAD_KEY
-			overridePayloadKey = aws.String("TASK_PAYLOAD")
-			// DEPLOY_METHOD:  Curerntly it's ECS by default can be switched to DOCKER
-			d := &Docker{}
-			d.connect(dockerEndpointPath)
-			tasque.Executable = &AWSECS{
-				docker:                d,
-				ecsTaskDefinition:     taskDefinition,
-				overrideContainerName: overrideContainerName,
-				overridePayloadKey:    overridePayloadKey,
-				timeout:               getTimeout(),
-			}
-			tasque.runWithTimeout()
-		}
-	} else {
-		// CLI Mode
-		arguments := os.Args[1:]
-		if len(os.Args) > 1 {
-			tasque := Tasque{}
-			tasque.Executable = &Executable{
-				binary:    arguments[0],
-				arguments: arguments[1:],
-				timeout:   getTimeout(),
-			}
-			tasque.runWithTimeout()
-		} else {
-			log.Println("Expecting tasque to be run with an application")
-			log.Println("Usage: tasque npm start")
-		}
+	app := cli.NewApp()
+	app.Name = "tasque"
+	app.Usage = "Pass messages to executables and Docker containers from AWS SQS or Step Functions"
+	app.Version = Version
+	cli.VersionPrinter = func(c *cli.Context) {
+		fmt.Printf("version=%s buildDate=%s sha=%s branch=%s (%s)\n", c.App.Version, BuildDate, GitCommit, GitBranch, GitSummary)
 	}
-}
+	app.Action = func(c *cli.Context) error {
+		otherMain(c)
+		return nil
+	}
 
-func (tasque *Tasque) getHandler() {
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:   "execute-method, deploy-method, m",
+			Usage:  "execution environment: local, docker, or ecs",
+			Value:  "local",
+			EnvVar: "EXECUTE_METHOD,DEPLOY_METHOD",
+		},
+		cli.StringFlag{
+			Name:   "container-name, n",
+			Usage:  "name for the new container",
+			Value:  "tasque_executable",
+			EnvVar: "CONTAINER_NAME,DOCKER_CONTAINER_NAME,ECS_CONTAINER_NAME",
+		},
+		cli.StringFlag{
+			Name:   "docker-endpoint, e",
+			Usage:  "the unix socket for Docker API connections",
+			Value:  "unix:///var/run/docker.sock",
+			EnvVar: "DOCKER_ENDPOINT",
+		},
+		cli.StringFlag{
+			Name:   "task-definition, f",
+			Usage:  "ARN of the ECS task or JSON suitable for Docker API /container/create",
+			EnvVar: "TASK_DEFINITION,DOCKER_TASK_DEFINITION,ECS_TASK_DEFINITION",
+		},
+		cli.StringFlag{
+			Name:   "sfn-activity-arn, sqs-queue-url, q",
+			Usage:  "the Step Functions activity ARN or SQS queue URL to receive messages on",
+			EnvVar: "TASK_ACTIVITY_ARN,TASK_QUEUE_URL,RECEIVE_PATH",
+		},
+		cli.DurationFlag{
+			Name:   "sfn-heartbeat, b",
+			Usage:  "sends a message to the Step Function activity that the task is making progress (example: 10s 40m 1h 3d)",
+			Value:  time.Second * 30,
+			EnvVar: "TASK_HEARTBEAT",
+		},
+		cli.StringFlag{
+			Name:   "payload, p",
+			Usage:  "the data payload to pass to the executable, useful for testing",
+			EnvVar: "TASK_PAYLOAD,PAYLOAD",
+		},
+		cli.StringFlag{
+			Name:   "payload-key",
+			Usage:  "the env var to set in the executable environment",
+			Value:  "TASK_PAYLOAD",
+			EnvVar: "TASK_PAYLOAD_KEY",
+		},
+		cli.DurationFlag{
+			Name:   "task-timeout, t",
+			Usage:  "the maximimum amount of time allowed for the executable to run (example: 10s 40m 1h 3d)",
+			Value:  time.Second * 30,
+			EnvVar: "TASK_TIMEOUT",
+		},
+		cli.StringFlag{
+			Name:   "docker-auth",
+			Usage:  "a docker authentication json string",
+			EnvVar: "DOCKER_AUTH_DATA",
+		},
+	}
+
+	app.Run(os.Args)
+}
+func otherMain(c *cli.Context) {
+	var (
+		executeMethod         string
+		taskDefinition        string
+		payload               string
+		overrideContainerName string
+		dockerEndpointPath    string
+	)
+
+	taskDefinition = c.String("task-definition")
+	executeMethod = c.String("execute-method")
+	payload = c.String("payload")
+	overrideContainerName = c.String("container-name")
+	dockerEndpointPath = c.String("docker-endpoint")
+
+	tasque := Tasque{}
+
+	sfnfmt := regexp.MustCompile(StepFunctionArnFormat)
+	sqsfmt := regexp.MustCompile(SQSURLFormat)
 	var handler MessageHandler
-	taskPayload := os.Getenv("TASK_PAYLOAD")
-	taskQueueURL := os.Getenv("TASK_QUEUE_URL")
-	activityARN := os.Getenv("TASK_ACTIVITY_ARN")
-	if taskPayload != "" {
-		handler = &ENVHandler{}
-	} else if taskQueueURL != "" {
-		handler = &SQSHandler{}
-	} else if activityARN != "" {
+	switch {
+	case sfnfmt.MatchString(c.String("q")):
 		handler = &SFNHandler{
-			activityARN: activityARN,
+			activityARN: c.String("q"),
 		}
-	} else {
-		panic("No handler")
+	case sqsfmt.MatchString(c.String("q")):
+		handler = &SQSHandler{
+			awsRegion: sqsfmt.FindStringSubmatch(c.String("q"))[1],
+			queueURL:  c.String("q"),
+		}
+	default:
+		handler = &ENVHandler{
+			localPayload: payload,
+		}
 	}
 	tasque.Handler = handler
+
+	switch executeMethod {
+	case "local":
+		var argSlice []string
+		if len(c.Args().Tail()) > 0 {
+			argSlice = c.Args().Tail()
+		}
+		tasque.Executable = &Executable{
+			binary:    c.Args().Get(0),
+			arguments: argSlice,
+			timeout:   c.Duration("task-timeout"),
+		}
+	case "ecs":
+		d := &Docker{}
+		d.connect(dockerEndpointPath)
+		payloadKey := c.String("payload-key")
+		tasque.Executable = &AWSECS{
+			docker:                d,
+			ecsTaskDefinition:     &taskDefinition,
+			overrideContainerName: &overrideContainerName,
+			overridePayloadKey:    &payloadKey,
+			timeout:               c.Duration("task-timeout"),
+			heartbeatDuration:     c.Duration("sfn-heartbeat"),
+		}
+	case "docker":
+		dockerTaskDefinition := DockerTaskDefinition{}
+		json.Unmarshal([]byte(taskDefinition), &dockerTaskDefinition)
+		d := &AWSDOCKER{
+			containerName:        overrideContainerName,
+			timeout:              c.Duration("task-timeout"),
+			containerArgs:        payload,
+			dockerTaskDefinition: dockerTaskDefinition,
+			authData:             c.String("docker-auth"),
+		}
+		d.connect(dockerEndpointPath)
+		tasque.Executable = d
+	}
+	tasque.runWithTimeout()
 }
 
 func (tasque *Tasque) runWithTimeout() {
-	tasque.getHandler()
 	// Commented code is for potential future "daemon"
 	// var wg sync.WaitGroup
 	// for i := 0; i < 5; i++ {
@@ -167,36 +218,4 @@ func (tasque *Tasque) runWithTimeout() {
 	// 	}()
 	// }
 	// wg.Wait()
-}
-
-func getTimeout() time.Duration {
-	taskTimeout := os.Getenv("TASK_TIMEOUT")
-	if taskTimeout == "" {
-		log.Println("Default timeout: 30s")
-		timeout, _ := time.ParseDuration("30s")
-		return timeout
-	}
-	timeout, err := time.ParseDuration(taskTimeout)
-	if err != nil {
-		log.Println(err.Error())
-		os.Exit(1)
-		return time.Duration(0)
-	}
-	return timeout
-}
-
-func getHeartbeatTime() time.Duration {
-	taskTimeout := os.Getenv("TASK_HEARTBEAT")
-	if taskTimeout == "" {
-		log.Println("Default timeout: 30s")
-		timeout, _ := time.ParseDuration("30s")
-		return timeout
-	}
-	timeout, err := time.ParseDuration(taskTimeout)
-	if err != nil {
-		log.Println(err.Error())
-		os.Exit(1)
-		return time.Duration(0)
-	}
-	return timeout
 }
